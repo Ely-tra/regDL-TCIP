@@ -1,0 +1,14 @@
+canonicalizer=npy_single
+splitter=ordered
+data_mode=0
+data_path=/Users/elytra/Documents/JupyterNB/regDL-TCIP/test_space/synth.npy
+wrf_dir=/N/slate/kmluong/PROJECT2/WRF/wrf_data
+train_frac=0.5
+val_frac=0.25
+test_frac=0.25
+num_segments=1
+segment_seed=None
+N=8
+train_size=4
+val_size=2
+test_size=2

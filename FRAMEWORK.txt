@@ -1,0 +1,33 @@
+regDL-TCIP/
+├─ README.md                     # (empty) project overview
+├─ FRAMEWORK.txt                 # project layout reference
+├─ cli/                          # entry points (build model, feed data, train)
+│  ├─ build_model.py             # build model config + dummy checkpoint + YAML history
+│  ├─ feed_data.py               # canonicalize data + split to train/val/test
+│  └─ train.py                   # training entry (selects pipeline via registry)
+├─ configs/                      # history/config outputs (YAML/JSON)
+│  └─ model/                     # model history YAML (e.g., AFNO_v1.yaml)
+├─ module/                       # core Python package (registries + implementations)
+│  ├─ data_canonicalizer/        # canonicalizers + splitters + registry for data feeding
+│  │  ├─ canonicalizers/         # dataset readers/normalizers
+│  │  ├─ splitters/              # train/val/test split strategies
+│  │  └─ registry.py             # maps dataset type -> canonicalizer/splitter
+│  ├─ models/                    # model architecture, builders, workflow
+│  │  ├─ architectures/          # model definitions (e.g., AFNO-TCP)
+│  │  ├─ blocks.py               # AFNO/BC blocks + BLOCK_REGISTRY
+│  │  ├─ builders/               # config builders for architectures
+│  │  ├─ registry.py             # model registry + YAML writer
+│  │  └─ workflow.py             # checkpoint + config writing helpers
+│  └─ training/                  # training loop, datasets, losses, pipelines
+│     ├─ datasets.py             # windowing + dataset loaders
+│     ├─ losses.py               # weighted loss construction
+│     ├─ masks.py                # BC rim utilities
+│     ├─ pipelines/              # training pipelines (e.g., P1-TC_AFNO)
+│     └─ registry.py             # pipeline registry
+├─ preprocess/                   # raw preprocessing scripts
+│  └─ WRF/                       # WRF/CMIP6 preprocessing steps
+│     ├─ CMIP6-WRF_step1.py
+│     ├─ CMIP6-WRF_step2.py
+│     └─ WRF-IDEALIZED.py
+└─ wrapper/                      # sbatch wrappers
+   └─ job_br200.sh               # main SLURM job wrapper (for different workflows, simply add job2, job3,...)

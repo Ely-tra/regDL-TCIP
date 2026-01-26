@@ -1,0 +1,22 @@
+architecture: AFNO_v1
+inputs:
+  num_vars: 2
+  num_times: 3
+  height: 8
+  width: 8
+stem:
+  type: Conv2d
+  stem_channels: 8
+bc_encoder:
+  type: BCEncoder
+  in_channels: 3
+  z_dim: 8
+trunk:
+  block_type: CondAFNO2DBlock
+  num_blocks: 2
+  channels: 8
+  hidden_factor: 2
+  mlp_expansion_ratio: 2
+  hard_threshold: 0.0
+output:
+  num_vars: 2
