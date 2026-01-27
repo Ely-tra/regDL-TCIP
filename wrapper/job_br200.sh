@@ -27,7 +27,7 @@ cd "$ROOT"
 # Flags (1=run, 0=skip)
 # ------------------------------------------------------------------------------
 CMIP6_WRF=(1 1)        # [0]=step1 (crop), [1]=step2 (npy)
-WRF_IDEALIZED=(1)      # [0]=idealized pipeline (placeholder)
+WRF_IDEALIZED=(1 1)    # [0]=generate experiments np files, [1]=merge them to a npy file, broken into frames file ([1] is optional and not optimal)
 TRAINING=(1 1 1)       # [0]=build, [1]=feed, [2]=train
 
 # ------------------------------------------------------------------------------
@@ -145,7 +145,7 @@ if [ "${TRAINING[1]}" -eq 1 ]; then
       --wrf_dir "${WRF_DIR}" \
       --x_resolution d01 \
       --imsize 100 \
-      --exp_split 12348910+57+6 \
+      --exp_split 12348910+57+6 \      # Only works if WRF_IDEALIZED=(1 0) (i.g. the second step is off) and data_mode=0
       --train_frac 0.7 \
       --val_frac 0.2 \
       --test_frac 0.1 \

@@ -23,7 +23,7 @@ def parse_args():
         "-f", "--frames",
         type=int,
         default=5,
-        help="Number of consecutive frames to include (default: 2)"
+        help="Number of consecutive frames to include (default: 5)"
     )
     parser.add_argument(
         "-vl", "--var_levels",
