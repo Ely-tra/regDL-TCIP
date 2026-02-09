@@ -157,6 +157,7 @@ fi
 if [ "${TRAINING[2]}" -eq 1 ]; then
     srun --ntasks=4 --gpus=4 --gpus-per-task=1 python -m cli.train \
       --trainer afno_tcp_v1 \
+      --architecture afno_v1 \
       --step_in 3 \
       --batch_size 8 \
       --num_workers 0 \

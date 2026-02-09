@@ -3,7 +3,7 @@ import os
 import torch
 import torch.distributed as dist
 
-from module.models.architectures.afno_tcp import TC_AFNO_Intensity
+from module.models.registry import resolve_model_class
 
 
 def setup_distributed():
@@ -91,7 +91,8 @@ def compute_x_y_stats(loader, stats_device, use_dist: bool):
 
 
 def build_model(args, device, x_mean, x_std, y_mean, y_std, use_dist, local_rank):
-    model = TC_AFNO_Intensity(
+    model_cls = resolve_model_class(args)
+    model = model_cls(
         num_vars=args.num_vars,
         num_times=args.num_times,
         H=args.height,

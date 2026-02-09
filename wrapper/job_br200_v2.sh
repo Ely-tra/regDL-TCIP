@@ -45,7 +45,7 @@ MODEL_YAML="${ROOT}/configs/model/AFNO_v1.yaml"           # build_model output y
 # ------------------------------------------------------------------------------
 # Model build params (cli.build_model)
 # ------------------------------------------------------------------------------
-BUILD_ARCH="afno_v1"          # architecture id for cli.build_model
+BUILD_ARCH="afno_v1"          # architecture id for cli.build_model / cli.train (e.g., afno_v1, afno_no_bc)
 BUILD_NUM_VARS=11             # channel count in X
 BUILD_NUM_TIMES=3             # frames used during training
 BUILD_HEIGHT=100              # spatial height
@@ -285,6 +285,7 @@ fi
 if [ "${TRAINING[2]}" -eq 1 ]; then
     srun --ntasks=4 --gpus=4 --gpus-per-task=1 python -m cli.train \
       --trainer "${TRAIN_TRAINER}" \
+      --architecture "${BUILD_ARCH}" \
       --step_in "${TRAIN_STEP_IN}" \
       --batch_size "${TRAIN_BATCH_SIZE}" \
       --num_workers "${TRAIN_NUM_WORKERS}" \

@@ -1,5 +1,6 @@
 import argparse
 
+from module.models.registry import available_architectures
 from module.training.registry import available_trainers, run_training
 
 
@@ -21,6 +22,12 @@ def parse_args():
         choices=available_trainers(),
         default="afno_tcp_v1",
         help="Training pipeline name.",
+    )
+    parser.add_argument(
+        "--architecture",
+        choices=available_architectures(),
+        default="afno_v1",
+        help="Model architecture name.",
     )
     parser.add_argument("--step_in", type=int, default=3, help="The number of frames used as input")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size")

@@ -1,23 +1,62 @@
 from __future__ import annotations
 
 import pathlib
+from dataclasses import dataclass
 
+from .architectures.afno_no_bc import TC_AFNO_NoBC
+from .architectures.afno_tcp import TC_AFNO_Intensity
+from .builders.afno_no_bc_v1 import AfnoNoBcV1Builder
 from .builders.afno_v1 import AfnoV1Builder
 
-_BUILDERS = {
-    "afno_v1": AfnoV1Builder(),
+
+@dataclass(frozen=True)
+class _ArchSpec:
+    builder: object
+    model_cls: type
+    training_policy: str
+
+
+_ARCH_SPECS = {
+    "afno_v1": _ArchSpec(
+        builder=AfnoV1Builder(),
+        model_cls=TC_AFNO_Intensity,
+        training_policy="bc",
+    ),
+    "afno_no_bc": _ArchSpec(
+        builder=AfnoNoBcV1Builder(),
+        model_cls=TC_AFNO_NoBC,
+        training_policy="no_bc",
+    ),
 }
 
 
 def available_architectures() -> tuple[str, ...]:
-    return tuple(_BUILDERS.keys())
+    return tuple(_ARCH_SPECS.keys())
 
 
-def resolve_builder(args) -> AfnoV1Builder:
-    name = getattr(args, "architecture", None) or "afno_v1"
-    if name not in _BUILDERS:
+def _resolve_arch_name(args) -> str:
+    return getattr(args, "architecture", None) or "afno_v1"
+
+
+def resolve_builder(args):
+    name = _resolve_arch_name(args)
+    if name not in _ARCH_SPECS:
         raise ValueError(f"Unknown architecture: {name}")
-    return _BUILDERS[name]
+    return _ARCH_SPECS[name].builder
+
+
+def resolve_model_class(args):
+    name = _resolve_arch_name(args)
+    if name not in _ARCH_SPECS:
+        raise ValueError(f"Unknown architecture: {name}")
+    return _ARCH_SPECS[name].model_cls
+
+
+def resolve_training_policy(args) -> str:
+    name = _resolve_arch_name(args)
+    if name not in _ARCH_SPECS:
+        raise ValueError(f"Unknown architecture: {name}")
+    return _ARCH_SPECS[name].training_policy
 
 
 def build_config(args):

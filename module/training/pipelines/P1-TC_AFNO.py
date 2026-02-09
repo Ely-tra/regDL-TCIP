@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
 from module.models.arch_helpers import build_model, compute_x_y_stats, setup_distributed
+from module.models.registry import resolve_training_policy
 from module.training.datasets import TCTimeWindowDataset, load_split_arrays
 from module.training.losses import build_weighted_loss
 from module.training.masks import extract_bc_rim_from_y, make_rim_mask_like, make_smooth_phi
@@ -21,6 +22,7 @@ def _apply_model_config(args, config_path):
     with open(config_path, "r", encoding="utf-8") as f:
         cfg = json.load(f)
     for key in [
+        "architecture",
         "num_vars",
         "num_times",
         "height",
@@ -34,6 +36,18 @@ def _apply_model_config(args, config_path):
     ]:
         if key in cfg:
             setattr(args, key, cfg[key])
+
+
+def _predict_with_policy(model, x, y, rim, phi, training_policy):
+    if training_policy == "bc":
+        B_fill = extract_bc_rim_from_y(y, rim=rim)
+        bc_mask = make_rim_mask_like(y, rim=rim)
+        bc_in = torch.cat([B_fill, bc_mask], dim=1)
+        y_free = model(x, bc_in)
+        return phi * y_free + (1.0 - phi) * B_fill
+    if training_policy == "no_bc":
+        return model(x)
+    raise ValueError(f"Unknown training policy: {training_policy}")
 
 
 class AfnoTcpTrainer:
@@ -128,13 +142,20 @@ class AfnoTcpTrainer:
             base_model = model.module if use_dist else model
             base_model.load_state_dict(state, strict=False)
 
-        phi = make_smooth_phi(
-            H=args.height,
-            W=args.width,
-            rim=args.rim,
-            device=device,
-            dtype=torch.float32,
-        )
+        training_policy = resolve_training_policy(args)
+        phi = None
+        if training_policy == "bc":
+            phi = make_smooth_phi(
+                H=args.height,
+                W=args.width,
+                rim=args.rim,
+                device=device,
+                dtype=torch.float32,
+            )
+
+        if (not use_dist or rank == 0) and training_policy == "no_bc" and args.rim > 0:
+            print("INFO: rim is ignored for no_bc architecture.", flush=True)
+
         optimizer = torch.optim.AdamW(
             model.parameters(),
             lr=args.learning_rate,
@@ -175,11 +196,14 @@ class AfnoTcpTrainer:
 
                 y = base_model.y_scaler.norm(y)
 
-                B_fill = extract_bc_rim_from_y(y, rim=args.rim)
-                bc_mask = make_rim_mask_like(y, rim=args.rim)
-                bc_in = torch.cat([B_fill, bc_mask], dim=1)
-                y_free = model(x, bc_in)
-                y_pred = phi * y_free + (1.0 - phi) * B_fill
+                y_pred = _predict_with_policy(
+                    model=model,
+                    x=x,
+                    y=y,
+                    rim=args.rim,
+                    phi=phi,
+                    training_policy=training_policy,
+                )
 
                 loss = loss_fn(y_pred, y)
 
@@ -214,11 +238,14 @@ class AfnoTcpTrainer:
                             x = base_model.x_scaler.norm(x)
                         y = base_model.y_scaler.norm(y)
 
-                        B_fill = extract_bc_rim_from_y(y, rim=args.rim)
-                        bc_mask = make_rim_mask_like(y, rim=args.rim)
-                        bc_in = torch.cat([B_fill, bc_mask], dim=1)
-                        y_free = model(x, bc_in)
-                        y_pred = phi * y_free + (1.0 - phi) * B_fill
+                        y_pred = _predict_with_policy(
+                            model=model,
+                            x=x,
+                            y=y,
+                            rim=args.rim,
+                            phi=phi,
+                            training_policy=training_policy,
+                        )
 
                         loss = loss_fn(y_pred, y)
 

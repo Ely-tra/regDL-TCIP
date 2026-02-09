@@ -3,11 +3,13 @@ import pathlib
 
 import torch
 
-from module.models.architectures.afno_tcp import TC_AFNO_Intensity
+from module.models.registry import resolve_model_class
 
 
 def _model_config_dict(args):
+    architecture = getattr(args, "architecture", None) or "afno_v1"
     return {
+        "architecture": architecture,
         "num_vars": args.num_vars,
         "num_times": args.num_times,
         "height": args.height,
@@ -24,7 +26,8 @@ def _model_config_dict(args):
 
 def save_dummy_model(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    dummy = TC_AFNO_Intensity(
+    model_cls = resolve_model_class(args)
+    dummy = model_cls(
         num_vars=args.num_vars,
         num_times=args.num_times,
         H=args.height,
