@@ -19,7 +19,10 @@ module load python/gpu/3.10.10
 set -x
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # repo root (auto)
-PREPROCESS_DIR="/N/slate/kmluong/PROJECT2"               # base dir for cmip6 step1/2 scripts
+WORKDIR="/N/slate/kmluong/PROJECT2"               # working directory, all products will be created within this directory
+ideal_wrf_base="/N/project/Typhoon-deep-learning/data/tc-wrf/"   # idealized input base dir, no need for track file
+CMIP6_BASE_DIR="/N/project/hurricane-deep-learning/data/cmip6"   # contains *_track.txt and matched raw dirs
+CMIP6_TRACK_GLOB="*_track.txt"                                    # basename <name>_track.txt => raw dir <name>
 cd "$ROOT"
 
 # ------------------------------------------------------------------------------
@@ -32,8 +35,9 @@ TRAINING=(1 1 1)       # [build model config][run feed_data split][run training 
 # ------------------------------------------------------------------------------
 # Common scratch / checkpoints / model config
 # ------------------------------------------------------------------------------
-TMP_DIR="/N/slate/kmluong/PROJECT2/tmp"                  # temp output for train/val/test splits
-CKPT_DIR="/N/slate/kmluong/PROJECT2/checkpoints"         # checkpoint output directory
+TMP_DIR="$WORKDIR/tmp"                  # temp output for train/val/test splits
+CKPT_DIR="$WORKDIR/checkpoints"         # checkpoint output directory
+PREPROCESS_DIR="${ROOT}/preprocess"           # base dir for cmip6 step1/2 scripts
 MODEL_NAME="AFNO-TCP.pt"                                 # base checkpoint name
 MODEL_CFG="${CKPT_DIR}/AFNO_config1.json"                # build_model output config (json)
 MODEL_YAML="${ROOT}/configs/model/AFNO_v1.yaml"           # build_model output yaml
@@ -95,10 +99,8 @@ TRAIN_HIGH_FREQ_CUTOFF_RATIO=0.5   # high-freq cutoff ratio
 # ------------------------------------------------------------------------------
 # CMIP6/WRF preprocessing inputs/outputs
 # ------------------------------------------------------------------------------
-track_file='/N/project/hurricane-deep-learning/data/cmip6/ssp245_2080_2100_track.txt'  # CMIP6 track file
-raw_data_dir='/N/project/hurricane-deep-learning/data/cmip6/ssp245_2080_2100/'         # CMIP6 raw wrfout dir
-level1_dir='/N/slate/kmluong/PROJECT2/level_1_data_ssp245'                              # CMIP6 step1 output dir
-level2_dir='/N/slate/kmluong/PROJECT2/level_2_data_ssp245'                              # CMIP6 step2 output dir
+level1_dir="$WORKDIR/level_1_data_ssp245"                              # CMIP6 step1 output dir
+level2_dir="$WORKDIR/level_2_data_ssp245"                              # CMIP6 step2 output dir
 
 # ------------------------------------------------------------------------------
 # Preprocess parameters
@@ -117,8 +119,7 @@ prefix="wrf_tropical_cyclone_track_${frames}_dataset"  # CMIP6 step2 output pref
 # ------------------------------------------------------------------------------
 # WRF idealized inputs/outputs
 # ------------------------------------------------------------------------------
-ideal_wrf_base="/N/project/Typhoon-deep-learning/data/tc-wrf/"   # idealized input base dir
-ideal_wrf_root="/N/slate/kmluong/PROJECT2/WRF"                   # idealized output root
+ideal_wrf_root="$WORKDIR/WRF"                   # idealized output root
 ideal_x_res="d01"                                                 # resolution string in filename
 ideal_frames=5                     # frame length used in idealized step2 chunking
 # Idealized variables to extract in step1
@@ -167,32 +168,66 @@ fi
 # CMIP6/WRF preprocessing
 # ------------------------------------------------------------------------------
 if [ "${CMIP6_WRF[0]}" -eq 1 ]; then
-    pushd "$PREPROCESS_DIR" >/dev/null
-    python step1.py \
-        --track_file "$track_file" \
-        --data_dir   "$raw_data_dir" \
-        --workdir    "$level1_dir" \
-        --imsize_x   $imsize_x \
-        --imsize_y   $imsize_y
-    popd >/dev/null
+    mkdir -p "$level1_dir"
+
+    shopt -s nullglob
+    cmip6_tracks=( "$CMIP6_BASE_DIR"/$CMIP6_TRACK_GLOB )
+    shopt -u nullglob
+
+    if [ "${#cmip6_tracks[@]}" -eq 0 ]; then
+        echo "ERROR: no track files matched ${CMIP6_BASE_DIR}/${CMIP6_TRACK_GLOB}" >&2
+        exit 1
+    fi
+
+    cmip6_pairs=0
+    for track_file in "${cmip6_tracks[@]}"; do
+        track_base="$(basename "$track_file")"
+        raw_name="${track_base%_track.txt}"
+        raw_data_dir="${CMIP6_BASE_DIR}/${raw_name}"
+
+        if [ ! -d "$raw_data_dir" ]; then
+            echo "WARN: skip ${track_file}; missing raw dir ${raw_data_dir}" >&2
+            continue
+        fi
+
+        echo "CMIP6 step1 pair: track=${track_file} data_dir=${raw_data_dir}"
+        python "$PREPROCESS_DIR/WRF/CMIP6-WRF_step1.py" \
+            --track_file "$track_file" \
+            --data_dir   "$raw_data_dir" \
+            --workdir    "$level1_dir" \
+            --imsize_x   "$imsize_x" \
+            --imsize_y   "$imsize_y"
+        cmip6_pairs=$((cmip6_pairs + 1))
+    done
+
+    if [ "$cmip6_pairs" -eq 0 ]; then
+        echo "ERROR: no valid CMIP6 track/raw-dir pairs found under ${CMIP6_BASE_DIR}" >&2
+        exit 1
+    fi
 fi
 
 if [ "${CMIP6_WRF[1]}" -eq 1 ]; then
-    pushd "$PREPROCESS_DIR" >/dev/null
-    python step2.py \
+    shopt -s nullglob
+    level1_files=( "$level1_dir"/*.nc )
+    shopt -u nullglob
+    if [ "${#level1_files[@]}" -eq 0 ]; then
+        echo "ERROR: no .nc files found in ${level1_dir}; skip CMIP6 step2" >&2
+        exit 1
+    fi
+
+    python "$PREPROCESS_DIR/WRF/CMIP6-WRF_step2.py" \
         --indir       "$level1_dir" \
         --outdir      "$level2_dir" \
-        --frames      $frames \
+        --frames      "$frames" \
         --var_levels  "${var_levels[@]}" \
         --prefix      "$prefix"
-    popd >/dev/null
 fi
 
 # ------------------------------------------------------------------------------
 # WRF idealized pipeline
 # ------------------------------------------------------------------------------
 if [ "${WRF_IDEALIZED[0]}" -eq 1 ]; then
-    python "${ROOT}/preprocess/WRF/WRF-IDEALIZED_step1.py" \
+    python "$PREPROCESS_DIR/WRF/WRF-IDEALIZED_step1.py" \
         --imsize_variables "${imsize_x}" "${imsize_y}" \
         --root "${ideal_wrf_root}" \
         --wrf_base "${ideal_wrf_base}" \
@@ -202,7 +237,7 @@ if [ "${WRF_IDEALIZED[0]}" -eq 1 ]; then
 fi
 
 if [ "${WRF_IDEALIZED[1]}" -eq 1 ]; then
-    python "${ROOT}/preprocess/WRF/WRF-IDEALIZED_step2.py" \
+    python "$PREPROCESS_DIR/WRF/WRF-IDEALIZED_step2.py" \
         --indir "${ideal_step1_out}" \
         --outdir "${ideal_step1_out}" \
         --frames "${ideal_frames}" \
