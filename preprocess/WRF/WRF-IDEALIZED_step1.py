@@ -1,177 +1,349 @@
+import argparse
 import glob
-import re
 import os
+import re
+
 import numpy as np
 import xarray as xr
-import argparse
 
-print('Starting')
+
+DEFAULT_VAR_LEVELS = [
+    "U10m",
+    "V10m",
+    "SST",
+    "LANDMASK",
+    "U14",
+    "V14",
+    "U03",
+    "V03",
+    "T12",
+    "QVAPOR05",
+    "PHB05",
+]
+
+DEFAULT_EXPERIMENTS = [
+    "exp_02km_m01",
+    "exp_02km_m02",
+    "exp_02km_m03",
+    "exp_02km_m04",
+    "exp_02km_m05",
+    "exp_02km_m06",
+    "exp_02km_m07",
+    "exp_02km_m08",
+    "exp_02km_m09",
+    "exp_02km_m10",
+]
+
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Extract WRF data without eid and m_id.')
-    parser.add_argument('-ix', '--imsize_variables', type=int, nargs=2, default=[100, 100],
-                        help='Image size for variable extraction (width height)')
-    parser.add_argument('-r', '--root', type=str, default='/N/slate/kmluong/PROJECT2/WRF',
-                        help='Output directory')
-    parser.add_argument('-b', '--wrf_base', type=str, default="/N/project/Typhoon-deep-learning/data/tc-wrf/",
-                        help='Base directory to read from')
-    parser.add_argument('-vl', '--var_levels', type=str, nargs='+', 
-                        default=["U10m", "V10m", "SST", "LANDMASK",
-                                 "U14", "V14", "U03", "V03",
-                                 "T12", "QVAPOR05", "PHB05"],
-                        help=("List of variable-level codes. Format e.g. U01, V02, QVAPOR03 "
-                              "or PSFC for surface. Levels are parsed and halved (ceil)."))
-    parser.add_argument('-ew', '--experiment_wrf', type=str, nargs='+', 
-                        default=["exp_02km_m01", "exp_02km_m02", "exp_02km_m03", "exp_02km_m04",
-                                 "exp_02km_m05", "exp_02km_m06", "exp_02km_m07", "exp_02km_m08",
-                                 "exp_02km_m09", "exp_02km_m10"],
-                        help='WRF experiment folders to process (inputs)')
-    parser.add_argument('-xd', '--X_resolution', type=str, default='d01', 
-                        help='X resolution string in filename (e.g. d01)')
+    parser = argparse.ArgumentParser(
+        description="Crop idealized WRF outputs and write one NetCDF per storm folder"
+    )
+    parser.add_argument(
+        "--data_dir",
+        "-dd",
+        "-b",
+        "--wrf_base",
+        type=str,
+        default="/N/project/Typhoon-deep-learning/data/tc-wrf/",
+        help="Base directory containing experiment/storm folders",
+    )
+    parser.add_argument(
+        "--workdir",
+        "-wd",
+        type=str,
+        default=None,
+        help="Directory to save WRF_STORMID_*.nc",
+    )
+    parser.add_argument(
+        "-r",
+        "--root",
+        type=str,
+        default="/N/slate/kmluong/PROJECT2/WRF",
+        help="Legacy output root; if --workdir is omitted, output is <root>/wrf_data",
+    )
+    parser.add_argument(
+        "--imsize_x",
+        "-x",
+        type=int,
+        default=None,
+        help="Crop width",
+    )
+    parser.add_argument(
+        "--imsize_y",
+        "-y",
+        type=int,
+        default=None,
+        help="Crop height",
+    )
+    parser.add_argument(
+        "-ix",
+        "--imsize_variables",
+        type=int,
+        nargs=2,
+        default=[100, 100],
+        help="Legacy crop size [x y], used when --imsize_x/--imsize_y are not set",
+    )
+    parser.add_argument(
+        "-vl",
+        "--var_levels",
+        type=str,
+        nargs="+",
+        default=DEFAULT_VAR_LEVELS,
+        help="Accepted for compatibility; step1 writes cropped fields, step2 selects variables",
+    )
+    parser.add_argument(
+        "-ew",
+        "--experiment_wrf",
+        type=str,
+        nargs="+",
+        default=DEFAULT_EXPERIMENTS,
+        help="WRF experiment/storm folder names to process",
+    )
+    parser.add_argument(
+        "--x_resolution",
+        "-xd",
+        "--X_resolution",
+        type=str,
+        default="d01",
+        help="Resolution token to match in filenames (e.g. d01)",
+    )
     return parser.parse_args()
 
 
-def extract_input_variables(ds1, imsize1=(64, 64), var_levels=None):
-    """
-    Extract core variables from ds1 only (inputs).
-    """
-    if var_levels is None:
-        var_levels = [('U', 1), ('U', 2), ('U', 3),
-                      ('V', 1), ('V', 2), ('V', 3),
-                      ('T', 1), ('T', 2), ('T', 3),
-                      ('QVAPOR', 1), ('QVAPOR', 2), ('QVAPOR', 3),
-                      ('PSFC', None)]
+def resolve_imsize(args):
+    if args.imsize_x is not None or args.imsize_y is not None:
+        if args.imsize_x is None or args.imsize_y is None:
+            raise ValueError("Both --imsize_x and --imsize_y must be provided together")
+        imsize = [int(args.imsize_x), int(args.imsize_y)]
+    else:
+        imsize = [int(args.imsize_variables[0]), int(args.imsize_variables[1])]
+    if imsize[0] <= 0 or imsize[1] <= 0:
+        raise ValueError(f"Invalid image size: {imsize}")
+    return imsize
 
-    mid_x1 = ds1.sizes['west_east'] // 2
-    mid_y1 = ds1.sizes['south_north'] // 2
-    start_x1 = mid_x1 - imsize1[0] // 2
-    end_x1   = mid_x1 + imsize1[0] // 2
-    start_y1 = mid_y1 - imsize1[1] // 2
-    end_y1   = mid_y1 + imsize1[1] // 2
 
-    def select_variable(ds, var_name, lev):
-        try:
-            if lev is not None and 'bottom_top' in ds[var_name].dims:
-                selected = ds[var_name].isel(bottom_top=lev)
-            elif lev is not None and 'bottom_top_stag' in ds[var_name].dims:
-                selected = ds[var_name].isel(bottom_top_stag=lev)
-            elif lev is not None and 'lev' in ds[var_name].coords:
-                selected = ds[var_name].sel(lev=lev)
-            else:
-                selected = ds[var_name]
-        except Exception:
-            selected = ds[var_name]
-
-        if 'south_north' in selected.dims:
-            selected = selected.isel(south_north=slice(start_y1, end_y1))
-        elif 'south_north_stag' in selected.dims:
-            selected = selected.isel(south_north_stag=slice(start_y1, end_y1))
-        if 'west_east_stag' in selected.dims:
-            selected = selected.isel(west_east_stag=slice(start_x1, end_x1))
-        elif 'west_east' in selected.dims:
-            selected = selected.isel(west_east=slice(start_x1, end_x1))
-        return selected
-
-    arrays = []
-    for var, lev in var_levels:
-        if var in ('PH', 'PHB'):
-            try:
-                ph = select_variable(ds1, 'PH', lev)
-                phb = select_variable(ds1, 'PHB', lev)
-                selected_data = ph + phb
-            except Exception:
-                selected_data = select_variable(ds1, var, lev)
-        else:
-            selected_data = select_variable(ds1, var, lev)
-
-        if 'Time' not in selected_data.dims:
-            selected_data = selected_data.expand_dims(Time=[0])
-        if selected_data.dims[0] != 'Time':
-            selected_data = selected_data.transpose('Time', ...)
-
-        arr = np.squeeze(selected_data.values, axis=0)
-        arrays.append(arr)
-
-    if arrays:
-        min_h = min(a.shape[-2] for a in arrays)
-        min_w = min(a.shape[-1] for a in arrays)
-        if min_h <= 0 or min_w <= 0:
-            raise ValueError("Invalid spatial dimensions after slicing.")
-        arrays = [a[..., :min_h, :min_w] for a in arrays]
-    final_result = np.stack(arrays, axis=0)
-    final_result = final_result[np.newaxis, ...]  # shape: (1, channels, height, width)
-    return final_result
-
-def natural_sort_key(s):
-    """
-    Produce a sort key that sorts strings naturally.
-    """
-    return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
+def natural_sort_key(text):
+    return [int(tok) if tok.isdigit() else tok.lower() for tok in re.split(r"([0-9]+)", text)]
 
 
 def collect_x_files(exp_folder, x_res):
-    """
-    Given an experiment folder, collect all files whose names contain the X resolution substring.
-    Returns a list of x files sorted naturally by basename (chronological order in filename).
-    """
     all_files = glob.glob(os.path.join(exp_folder, "*"))
-    x_files = [f for f in all_files if x_res in os.path.basename(f)]
-    x_files.sort(key=lambda f: natural_sort_key(os.path.basename(f)))
+    x_files = [path for path in all_files if x_res in os.path.basename(path)]
+    x_files.sort(key=lambda path: natural_sort_key(os.path.basename(path)))
     return x_files
 
 
-def process_experiments(exp_list, base_path, imsize_x, root, x_res, var_levels):
-    """
-    Process a list of experiment folders. For each folder, collect X files by looking for the X resolution
-    substring in the filename. Process each file and save the concatenated results using the original folder name.
-    """
-    for exp in exp_list:
-        exp_folder1 = os.path.join(base_path, exp)
-        x_files = collect_x_files(exp_folder1, x_res)
-        if not x_files:
-            print(f"No X files found in {exp} for X resolution '{x_res}'.")
-            continue
-        
-        results = []
-        for x_file in x_files:
-            ds1 = xr.open_dataset(x_file)
-            
-            # Convert var_levels strings (e.g. "U01") to tuples: ("U", 1) or ("PSFC", None)
-            levels = []
-            for v in var_levels:
-                if v.endswith('m'):
-                    levels.append((v[:-1], None))
-                    continue
-                match = re.match(r'^([A-Za-z_]+)(\d+)$', v)
-                if match:
-                    levels.append((match.group(1), int(match.group(2))))
+def get_coord_names(ds):
+    lat_candidates = ("XLAT", "XLAT_M")
+    lon_candidates = ("XLONG", "XLONG_M")
+    lat_name = next((name for name in lat_candidates if name in ds), None)
+    lon_name = next((name for name in lon_candidates if name in ds), None)
+    if lat_name is None or lon_name is None:
+        raise ValueError("Could not find latitude/longitude fields (e.g., XLAT/XLONG).")
+    return lat_name, lon_name
+
+
+def decode_times_from_wrf(ds, n_time):
+    if "Times" in ds:
+        raw = ds["Times"].values
+        strings = []
+        if raw.ndim == 2:
+            for row in raw:
+                chars = []
+                for val in row:
+                    if isinstance(val, (bytes, np.bytes_)):
+                        chars.append(val.decode("utf-8", errors="ignore"))
+                    else:
+                        chars.append(str(val))
+                strings.append("".join(chars).strip())
+        elif raw.ndim == 1:
+            for val in raw:
+                if isinstance(val, (bytes, np.bytes_)):
+                    strings.append(val.decode("utf-8", errors="ignore").strip())
                 else:
-                    levels.append((v, None))
-            result = extract_input_variables(ds1, imsize1=imsize_x, var_levels=levels)
-            
-            results.append(result)
-        
-        if results:
-            concatenated_result = np.concatenate(results, axis=0)
-            x_filename = f"x_{x_res}_{imsize_x[0]}x{imsize_x[1]}_{exp}.npy"
+                    strings.append(str(val).strip())
+        if strings:
+            parsed = []
+            for s in strings:
+                try:
+                    parsed.append(np.datetime64(s.replace("_", "T")))
+                except Exception:
+                    parsed = []
+                    break
+            if len(parsed) == n_time:
+                return np.array(parsed, dtype="datetime64[ns]")
+    base = np.datetime64("2000-01-01T00:00:00")
+    return base + np.arange(n_time).astype("timedelta64[h]")
 
-            np.save(os.path.join(root, x_filename), concatenated_result)
-            print(f"Saved concatenated {x_filename} in {root}.")
-        else:
-            print(f"No valid files processed for folder {exp}.")
-    print("All experiment folders have been processed and saved with concatenated data.")
+
+def resolve_time_values(ds_sub, ds_raw):
+    n_time = int(ds_sub.sizes["Time"])
+    time_coord = ds_sub.coords.get("Time")
+    if time_coord is not None and np.issubdtype(time_coord.dtype, np.datetime64):
+        return np.array(time_coord.values, dtype="datetime64[ns]")
+
+    if "XTIME" in ds_sub.coords:
+        xtime = ds_sub["XTIME"].values
+        if np.issubdtype(np.array(xtime).dtype, np.datetime64):
+            return np.array(xtime, dtype="datetime64[ns]")
+
+    if "XTIME" in ds_raw.coords:
+        xtime = ds_raw["XTIME"].values
+        if np.issubdtype(np.array(xtime).dtype, np.datetime64):
+            return np.array(xtime, dtype="datetime64[ns]")
+
+    return decode_times_from_wrf(ds_raw, n_time)
 
 
-if __name__ == '__main__':
+def interpolate_staggered_to_center(ds, sn_dim, we_dim):
+    sn_stag = f"{sn_dim}_stag"
+    we_stag = f"{we_dim}_stag"
+
+    for name in list(ds.data_vars):
+        var = ds[name]
+        dims = var.dims
+        if sn_stag not in dims and we_stag not in dims:
+            continue
+
+        var_c = var
+        if sn_stag in dims:
+            var_c = 0.5 * (
+                var_c.isel({sn_stag: slice(0, ds.sizes[sn_dim])})
+                + var_c.isel({sn_stag: slice(1, ds.sizes[sn_stag])})
+            )
+            var_c = var_c.rename({sn_stag: sn_dim})
+
+        if we_stag in var_c.dims:
+            var_c = 0.5 * (
+                var_c.isel({we_stag: slice(0, ds.sizes[we_dim])})
+                + var_c.isel({we_stag: slice(1, ds.sizes[we_stag])})
+            )
+            var_c = var_c.rename({we_stag: we_dim})
+
+        ds[name] = var_c
+    return ds
+
+
+def compute_center_crop(size, crop):
+    center = size // 2
+    start = max(center - crop // 2, 0)
+    end = start + crop
+    if end > size:
+        end = size
+        start = max(0, end - crop)
+    return start, end
+
+
+def extract_data_centered(ds, imsize_x, imsize_y):
+    lat_name, lon_name = get_coord_names(ds)
+    grid_lat = ds[lat_name].isel(Time=0)
+    grid_lon = ds[lon_name].isel(Time=0)
+    sn_dim, we_dim = "south_north", "west_east"
+
+    ds_work = interpolate_staggered_to_center(ds.copy(deep=False), sn_dim, we_dim)
+
+    sni, eni = compute_center_crop(ds_work.sizes[sn_dim], imsize_y)
+    swi, ewi = compute_center_crop(ds_work.sizes[we_dim], imsize_x)
+    ds_sub = ds_work.isel({sn_dim: slice(sni, eni), we_dim: slice(swi, ewi)})
+
+    rename_map = {}
+    if sn_dim != "y":
+        rename_map[sn_dim] = "y"
+    if we_dim != "x":
+        rename_map[we_dim] = "x"
+    if rename_map:
+        ds_sub = ds_sub.rename(rename_map)
+
+    y_size = int(ds_sub.sizes["y"])
+    x_size = int(ds_sub.sizes["x"])
+    ds_sub = ds_sub.assign_coords({"y": np.arange(y_size), "x": np.arange(x_size)})
+
+    new_lat = ds[lat_name].isel({sn_dim: slice(sni, eni), we_dim: slice(swi, ewi)}).rename(
+        {sn_dim: "y", we_dim: "x"}
+    )
+    new_lon = ds[lon_name].isel({sn_dim: slice(sni, eni), we_dim: slice(swi, ewi)}).rename(
+        {sn_dim: "y", we_dim: "x"}
+    )
+    ds_sub = ds_sub.assign_coords({"TRUE_LAT": new_lat, "TRUE_LONG": new_lon})
+
+    center_i = ds_work.sizes[sn_dim] // 2
+    center_j = ds_work.sizes[we_dim] // 2
+    cen_lat_val = float(grid_lat.isel({sn_dim: center_i, we_dim: center_j}).values)
+    cen_lon_val = float(grid_lon.isel({sn_dim: center_i, we_dim: center_j}).values)
+
+    time_values = resolve_time_values(ds_sub, ds)
+    ds_sub = ds_sub.assign_coords(Time=("Time", time_values))
+    n_time = int(ds_sub.sizes["Time"])
+    ds_sub = ds_sub.assign_coords(
+        cen_lat=("Time", np.full(n_time, cen_lat_val)),
+        cen_lon=("Time", np.full(n_time, cen_lon_val)),
+    )
+
+    drop_vars = [
+        lat_name,
+        lon_name,
+        f"{lat_name}_U",
+        f"{lon_name}_U",
+        f"{lat_name}_V",
+        f"{lon_name}_V",
+        "south_north_stag",
+        "west_east_stag",
+        "Times",
+        "XTIME",
+    ]
+    ds_sub = ds_sub.drop_vars([name for name in drop_vars if name in ds_sub])
+    return ds_sub.load()
+
+
+def process_experiments(exp_list, base_path, imsize_x, workdir, x_res):
+    for exp in exp_list:
+        exp_folder = os.path.join(base_path, exp)
+        x_files = collect_x_files(exp_folder, x_res)
+        if not x_files:
+            print(f"No files found in {exp} for resolution token '{x_res}'.")
+            continue
+
+        print(f"=== Starting storm folder {exp} ===")
+        ds_list = []
+        skip_storm = False
+        for x_file in x_files:
+            try:
+                with xr.open_dataset(x_file) as ds:
+                    ds_sub = extract_data_centered(ds, imsize_x[0], imsize_x[1])
+                ds_list.append(ds_sub)
+                print(f"  Added {os.path.basename(x_file)}")
+            except Exception as exc:
+                print(f"  Error processing {x_file}: {exc!r}")
+                print(f"  Skipping storm folder {exp}")
+                skip_storm = True
+                break
+
+        if skip_storm or not ds_list:
+            continue
+
+        try:
+            ds_merged = xr.concat(ds_list, dim="Time").sortby("Time")
+            out_fn = os.path.join(workdir, f"WRF_STORMID_{exp}.nc")
+            ds_merged.to_netcdf(out_fn)
+            print(f"Saved {out_fn}\n")
+        except Exception as exc:
+            print(f"Failed to save {exp}: {exc!r}\n")
+
+    print("All storm folders processed.")
+
+
+if __name__ == "__main__":
     args = parse_args()
-    imsize_x = args.imsize_variables
-    root = os.path.join(args.root, 'wrf_data')
-    base_path = args.wrf_base
-    var_levels = args.var_levels
-
-    os.makedirs(root, exist_ok=True)
+    imsize = resolve_imsize(args)
+    workdir = args.workdir if args.workdir else os.path.join(args.root, "wrf_data")
+    os.makedirs(workdir, exist_ok=True)
 
     if args.experiment_wrf:
-        print("Processing experiments:")
-        process_experiments(args.experiment_wrf, base_path, imsize_x, root,
-                            x_res=args.X_resolution, var_levels=var_levels)
+        process_experiments(
+            exp_list=args.experiment_wrf,
+            base_path=args.data_dir,
+            imsize_x=imsize,
+            workdir=workdir,
+            x_res=args.x_resolution,
+        )

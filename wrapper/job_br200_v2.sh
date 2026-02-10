@@ -18,7 +18,7 @@
 module load python/gpu/3.10.10
 set -x
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # repo root (auto)
+ROOT="/N/u/kmluong/BigRed200/regDL-TCIP"   # repo root
 WORKDIR="/N/slate/kmluong/PROJECT2"               # working directory, all products will be created within this directory
 ideal_wrf_base="/N/project/Typhoon-deep-learning/data/tc-wrf/"   # idealized input base dir, no need for track file
 CMIP6_BASE_DIR="/N/project/hurricane-deep-learning/data/cmip6"   # contains *_track.txt and matched raw dirs
@@ -28,8 +28,9 @@ cd "$ROOT"
 # ------------------------------------------------------------------------------
 # Selectable flags (1=run, 0=skip)
 # ------------------------------------------------------------------------------
-CMIP6_WRF=(0 0)        # [run crop][run npy]; leave 0 0 if only using idealized pipeline
-WRF_IDEALIZED=(1 1)    # [run step1 per-exp npy][run step2 chunk to frames]; set [1]=0 to feed per-exp
+DATASOURCE="IDEALIZED"  # choose data source workflow: CMIP6 or IDEALIZED
+CMIP6_WRF=(0 0)         # auto-off by DATASOURCE (manual on, auto off)
+WRF_IDEALIZED=(0 0)     # auto-off by DATASOURCE (manual on, auto off)
 TRAINING=(1 1 1)       # [build model config][run feed_data split][run training loop]
 
 # ------------------------------------------------------------------------------
@@ -46,8 +47,9 @@ MODEL_YAML="${ROOT}/configs/model/AFNO_v1.yaml"           # build_model output y
 # Model build params (cli.build_model)
 # ------------------------------------------------------------------------------
 BUILD_ARCH="afno_v1"          # architecture id for cli.build_model / cli.train (e.g., afno_v1, afno_no_bc)
-BUILD_NUM_VARS=11             # channel count in X
-BUILD_NUM_TIMES=3             # frames used during training
+MODEL_STEP_IN=3               # shared temporal length for feed_data/build_model/train
+BUILD_NUM_VARS=11             # channel count in X (auto-overridden if AUTO_NUM_VARS_FROM_DATA=true)
+BUILD_NUM_TIMES="${MODEL_STEP_IN}"  # frames used during training
 BUILD_HEIGHT=100              # spatial height
 BUILD_WIDTH=100               # spatial width
 BUILD_NUM_BLOCKS=6            # AFNO depth for init config
@@ -61,12 +63,12 @@ BUILD_STEM_CHANNELS=256       # stem width
 # Training hyperparameters (cli.train)
 # ------------------------------------------------------------------------------
 TRAIN_TRAINER="afno_tcp_v1"        # trainer registry key
-TRAIN_STEP_IN=3                    # input frames per sample
+TRAIN_STEP_IN="${MODEL_STEP_IN}"   # input frames per sample
 TRAIN_BATCH_SIZE=8                 # per-GPU batch size
 TRAIN_NUM_WORKERS=0                # 0 on GPU nodes to avoid fork+CUDA issues
 TRAIN_PIN_MEMORY=true              # pin memory for data loader
-TRAIN_NUM_VARS=11                  # channel count in X
-TRAIN_NUM_TIMES=3                  # frames per sample
+TRAIN_NUM_VARS=11                  # channel count in X (auto-overridden if AUTO_NUM_VARS_FROM_DATA=true)
+TRAIN_NUM_TIMES="${MODEL_STEP_IN}" # frames per sample
 TRAIN_HEIGHT=100                   # spatial height
 TRAIN_WIDTH=100                    # spatial width
 TRAIN_NUM_BLOCKS=8                 # AFNO depth during training
@@ -95,12 +97,13 @@ TRAIN_NORMALIZE_WEIGHTS=true       # normalize loss weights
 TRAIN_EPS=1e-6                     # loss epsilon
 TRAIN_HIGH_FREQ_COMPONENT_LOSS=false  # enable high-freq component loss
 TRAIN_HIGH_FREQ_CUTOFF_RATIO=0.5   # high-freq cutoff ratio
+AUTO_NUM_VARS_FROM_DATA=true       # infer channel count from feed source and override BUILD_NUM_VARS/TRAIN_NUM_VARS
 
 # ------------------------------------------------------------------------------
 # CMIP6/WRF preprocessing inputs/outputs
 # ------------------------------------------------------------------------------
-level1_dir="$WORKDIR/level_1_data_ssp245"                              # CMIP6 step1 output dir
-level2_dir="$WORKDIR/level_2_data_ssp245"                              # CMIP6 step2 output dir
+level1_dir="$WORKDIR/level_1_data"                              # CMIP6 step1 output dir
+level2_dir="$WORKDIR/level_2_data"                              # CMIP6 step2 output dir
 
 # ------------------------------------------------------------------------------
 # Preprocess parameters
@@ -112,33 +115,37 @@ frames=5                     # sequence length for CMIP6 step2
 var_levels=(
   U10m V10m SST LANDMASK
   U28 V28 U05 V05
-  T23 QVAPOR10 PHB10
+  T23 QVAPOR10 PHB10 SLP
 )
-prefix="wrf_tropical_cyclone_track_${frames}_dataset"  # CMIP6 step2 output prefix
+cmip6_num_vars=${#var_levels[@]}  # auto count for output naming
+prefix="wrf_tropical_cyclone_track_${frames}f_${cmip6_num_vars}v_dataset"  # CMIP6 step2 output prefix
 
 # ------------------------------------------------------------------------------
 # WRF idealized inputs/outputs
 # ------------------------------------------------------------------------------
 ideal_wrf_root="$WORKDIR/WRF"                   # idealized output root
 ideal_x_res="d01"                                                 # resolution string in filename
-ideal_frames=5                     # frame length used in idealized step2 chunking
+ideal_frames=5                     # frame length used in idealized step2
 # Idealized variables to extract in step1
 ideal_var_levels=(
   U10m V10m SST LANDMASK
   U14 V14 U03 V03
-  T12 QVAPOR05 PHB05
+  T12 QVAPOR05 PHB05 SLP
 )
+ideal_num_vars=${#ideal_var_levels[@]}  # auto count for idealized output naming
 # Idealized experiment folders to process
 ideal_experiments=(
   exp_02km_m01 exp_02km_m02 exp_02km_m03 exp_02km_m04 exp_02km_m05
   exp_02km_m06 exp_02km_m07 exp_02km_m08 exp_02km_m09 exp_02km_m10
 )
-ideal_step1_out="${ideal_wrf_root}/wrf_data"                      # idealized step1 output dir
-ideal_chunk_prefix="wrf_idealized_frames_${ideal_frames}"          # idealized step2 prefix
-ideal_chunk_X="${ideal_step1_out}/${ideal_chunk_prefix}_X.npy"     # idealized step2 X output
+ideal_step1_out="${ideal_wrf_root}/level_1_data"                  # idealized step1 output dir (.nc)
+ideal_step2_out="${ideal_wrf_root}/level_2_data"                  # idealized step2 output dir (.npy)
+ideal_chunk_prefix="wrf_idealized_track_${ideal_frames}f_${ideal_num_vars}v_dataset"  # idealized step2 prefix
+ideal_chunk_X="${ideal_step2_out}/${ideal_chunk_prefix}_X.npy"      # idealized step2 X output
+ideal_chunk_ID="${ideal_step2_out}/${ideal_chunk_prefix}_exp_ids.npy"  # idealized step2 sample exp ids
 
-# Split config for per-exp mode (only used if WRF_IDEALIZED=(1 0) → feed_data data_mode=1)
-WRF_EXP_SPLIT="12348910+57+6"      # Only works if WRF_IDEALIZED=(1 0) (i.e., step2 off) and data_mode=1
+# Split config by experiment IDs in idealized mode (works with step2 exp_ids output)
+WRF_EXP_SPLIT="12348910+57+6"
 
 # ------------------------------------------------------------------------------
 # feed_data split parameters
@@ -147,22 +154,75 @@ FEED_TRAIN_FRAC=0.7          # fraction for train split (data_mode=0)
 FEED_VAL_FRAC=0.2            # fraction for val split (data_mode=0)
 FEED_TEST_FRAC=0.1           # fraction for test split (data_mode=0)
 FEED_NUM_SEGMENTS=1          # segmented split count (data_mode=0)
-FEED_STEP_IN=3               # number of input frames in feed_data
+FEED_STEP_IN="${MODEL_STEP_IN}"  # number of input frames in feed_data
 
 # ------------------------------------------------------------------------------
-# Training input selection (auto-switch based on WRF_IDEALIZED[1])
+# Training input selection (auto-switch based on DATASOURCE)
 # ------------------------------------------------------------------------------
-# If idealized step2 is ON → use chunked dataset (data_mode=0)
-# If idealized step2 is OFF → use per-experiment npy files (data_mode=1)
-if [ "${WRF_IDEALIZED[1]}" -eq 1 ]; then
-    FEED_MODE=0               # use npy_single (chunked dataset)
-    FEED_DATA="${ideal_chunk_X}"  # chunked dataset path
-    FEED_EXP_ARGS=()          # exp_split ignored in data_mode=0
-else
-    FEED_MODE=1               # use wrf_experiments (per-exp files)
-    FEED_DATA="${ideal_chunk_X}"   # placeholder; not used by data_mode=1 but kept for completeness
-    FEED_EXP_ARGS=(--exp_split "${WRF_EXP_SPLIT}")  # exp-based split
-fi
+datasource_key="${DATASOURCE^^}"
+case "${datasource_key}" in
+    CMIP6)
+        #CMIP6_WRF=(1 1)      # run CMIP6 crop + CMIP6 npy
+        WRF_IDEALIZED=(0 0)  # skip idealized pipeline
+        FEED_MODE=0          # use npy_single
+        FEED_DATA="${level2_dir}/${prefix}_X.npy"  # CMIP6 step2 output
+        FEED_EXP_ARGS=()
+        ;;
+    IDEALIZED)
+        CMIP6_WRF=(0 0)      # skip CMIP6 pipeline
+        #WRF_IDEALIZED=(1 1)  # run idealized step1 + step2
+        FEED_MODE=0          # use chunked idealized npy
+        FEED_DATA="${ideal_chunk_X}"
+        FEED_EXP_ARGS=(
+          --splitter wrf_experiment
+          --exp_split "${WRF_EXP_SPLIT}"
+          --exp_ids_path "${ideal_chunk_ID}"
+        )
+        ;;
+    *)
+        echo "ERROR: DATASOURCE must be CMIP6 or IDEALIZED (got '${DATASOURCE}')" >&2
+        exit 1
+        ;;
+esac
+
+infer_num_vars_from_feed_source() {
+    if [ "${FEED_MODE}" -eq 0 ]; then
+        if [ ! -f "${FEED_DATA}" ]; then
+            echo ""
+            return 0
+        fi
+        python - "${FEED_DATA}" <<'PY'
+import numpy as np
+import sys
+
+path = sys.argv[1]
+arr = np.load(path, mmap_mode="r")
+if arr.ndim != 5:
+    raise SystemExit(f"Expected [N, T, H, W, C] for {path}, got {arr.shape}")
+print(int(arr.shape[-1]))
+PY
+        return
+    fi
+
+    shopt -s nullglob
+    wrf_files=( "${ideal_step1_out}"/x_"${ideal_x_res}"_*_exp_02km_m*.npy )
+    shopt -u nullglob
+    if [ "${#wrf_files[@]}" -eq 0 ]; then
+        echo ""
+        return 0
+    fi
+
+    python - "${wrf_files[0]}" <<'PY'
+import numpy as np
+import sys
+
+path = sys.argv[1]
+arr = np.load(path, mmap_mode="r")
+if arr.ndim != 4:
+    raise SystemExit(f"Expected [T, C, H, W] for {path}, got {arr.shape}")
+print(int(arr.shape[1]))
+PY
+}
 
 # ------------------------------------------------------------------------------
 # CMIP6/WRF preprocessing
@@ -228,25 +288,45 @@ fi
 # ------------------------------------------------------------------------------
 if [ "${WRF_IDEALIZED[0]}" -eq 1 ]; then
     python "$PREPROCESS_DIR/WRF/WRF-IDEALIZED_step1.py" \
-        --imsize_variables "${imsize_x}" "${imsize_y}" \
-        --root "${ideal_wrf_root}" \
-        --wrf_base "${ideal_wrf_base}" \
-        --var_levels "${ideal_var_levels[@]}" \
+        --data_dir "${ideal_wrf_base}" \
+        --workdir "${ideal_step1_out}" \
+        --imsize_x "${imsize_x}" \
+        --imsize_y "${imsize_y}" \
         --experiment_wrf "${ideal_experiments[@]}" \
-        --X_resolution "${ideal_x_res}"
+        --x_resolution "${ideal_x_res}"
 fi
 
 if [ "${WRF_IDEALIZED[1]}" -eq 1 ]; then
+    shopt -s nullglob
+    ideal_level1_files=( "$ideal_step1_out"/*.nc )
+    shopt -u nullglob
+    if [ "${#ideal_level1_files[@]}" -eq 0 ]; then
+        echo "ERROR: no .nc files found in ${ideal_step1_out}; skip IDEALIZED step2" >&2
+        exit 1
+    fi
+
     python "$PREPROCESS_DIR/WRF/WRF-IDEALIZED_step2.py" \
         --indir "${ideal_step1_out}" \
-        --outdir "${ideal_step1_out}" \
+        --outdir "${ideal_step2_out}" \
         --frames "${ideal_frames}" \
+        --var_levels "${ideal_var_levels[@]}" \
         --prefix "${ideal_chunk_prefix}"
 fi
 
 # ------------------------------------------------------------------------------
 # Training pipeline
 # ------------------------------------------------------------------------------
+if [ "${AUTO_NUM_VARS_FROM_DATA}" = true ]; then
+    inferred_num_vars="$(infer_num_vars_from_feed_source)"
+    if [ -n "${inferred_num_vars}" ]; then
+        echo "Auto-detected num_vars=${inferred_num_vars} from feed source."
+        BUILD_NUM_VARS="${inferred_num_vars}"
+        TRAIN_NUM_VARS="${inferred_num_vars}"
+    else
+        echo "WARN: could not infer num_vars from feed source; keeping BUILD_NUM_VARS=${BUILD_NUM_VARS}, TRAIN_NUM_VARS=${TRAIN_NUM_VARS}" >&2
+    fi
+fi
+
 if [ "${TRAINING[0]}" -eq 1 ]; then
     python -m cli.build_model \
       --architecture "${BUILD_ARCH}" \

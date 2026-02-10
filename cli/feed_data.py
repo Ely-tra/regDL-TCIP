@@ -35,6 +35,11 @@ def parse_args():
         help="Path to the input .npy dataset",
     )
     parser.add_argument(
+        "--exp_ids_path",
+        default="",
+        help="Optional path to sample-level experiment IDs (.npy); used with wrf_experiment splitter",
+    )
+    parser.add_argument(
         "--wrf_dir",
         default="/N/slate/kmluong/PROJECT2/WRF/wrf_data",
         help="Directory containing per-experiment WRF .npy files",
