@@ -109,7 +109,7 @@ def var_extract(ds: xr.Dataset, var_levels=None, frames: int = 2):
         var_names.append(f"{name}_{lvl}" if lvl is not None else name)
 
     n_time = ds.sizes["Time"]
-    bases = np.arange(0, n_time, 4)
+    bases = np.arange(n_time % frames, n_time, 4) #ignores some first frames
     x_list, z_list = [], []
 
     for base in bases:
@@ -149,7 +149,8 @@ def process_data(indir, outdir, var_levels=None, frames: int = 2, prefix: str = 
         if not fname.endswith(".nc"):
             continue
         fpath = os.path.join(indir, fname)
-        with xr.open_dataset(fpath) as ds:
+        with xr.open_dataset(fpath, decode_times=True) as ds:
+            #print(ds['Time'])
             n_time = int(ds.sizes["Time"])
             if n_time < frames:
                 print(f"Skipping {fname}: Time len {n_time} < frames {frames}")

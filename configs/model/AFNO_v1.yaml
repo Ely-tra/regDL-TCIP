@@ -1,0 +1,18 @@
+architecture: AFNO_no_bc_v1
+inputs:
+  num_vars: 11
+  num_times: 3
+  height: 100
+  width: 100
+stem:
+  type: Conv2d
+  stem_channels: 256
+trunk:
+  block_type: AFNO2DBlock
+  num_blocks: 6
+  channels: 256
+  hidden_factor: 8
+  mlp_expansion_ratio: 4
+  hard_threshold: 0.0
+output:
+  num_vars: 11

@@ -7,7 +7,7 @@
 
 # SLURM -------------------------------------------------------------
 #SBATCH -N 1
-#SBATCH -t 10:00:00
+#SBATCH -t 24:00:00
 #SBATCH -J TCNN-wrf
 #SBATCH -p gpu
 #SBATCH --gpus-per-node=4
@@ -19,7 +19,7 @@ module load python/gpu/3.10.10
 set -x
 
 ROOT="/N/u/kmluong/BigRed200/regDL-TCIP"   # repo root
-WORKDIR="/N/slate/kmluong/PROJECT2"               # working directory, all products will be created within this directory
+WORKDIR_BASE="/N/slate/kmluong/regDL-TCIP"          # base working directory; datasource subdir will be appended
 ideal_wrf_base="/N/project/Typhoon-deep-learning/data/tc-wrf/"   # idealized input base dir, no need for track file
 CMIP6_BASE_DIR="/N/project/hurricane-deep-learning/data/cmip6"   # contains *_track.txt and matched raw dirs
 CMIP6_TRACK_GLOB="*_track.txt"                                    # basename <name>_track.txt => raw dir <name>
@@ -28,10 +28,20 @@ cd "$ROOT"
 # ------------------------------------------------------------------------------
 # Selectable flags (1=run, 0=skip)
 # ------------------------------------------------------------------------------
-DATASOURCE="IDEALIZED"  # choose data source workflow: CMIP6 or IDEALIZED
-CMIP6_WRF=(0 0)         # auto-off by DATASOURCE (manual on, auto off)
+DATASOURCE="CMIP6"  # choose data source workflow: CMIP6 or IDEALIZED
+CMIP6_WRF=(0 1)         # auto-off by DATASOURCE (manual on, auto off)
 WRF_IDEALIZED=(0 0)     # auto-off by DATASOURCE (manual on, auto off)
 TRAINING=(1 1 1)       # [build model config][run feed_data split][run training loop]
+datasource_key="${DATASOURCE^^}"
+case "${datasource_key}" in
+    CMIP6|IDEALIZED)
+        WORKDIR="${WORKDIR_BASE}/${datasource_key}"
+        ;;
+    *)
+        echo "ERROR: DATASOURCE must be CMIP6 or IDEALIZED (got '${DATASOURCE}')" >&2
+        exit 1
+        ;;
+esac
 
 # ------------------------------------------------------------------------------
 # Common scratch / checkpoints / model config
@@ -46,9 +56,9 @@ MODEL_YAML="${ROOT}/configs/model/AFNO_v1.yaml"           # build_model output y
 # ------------------------------------------------------------------------------
 # Model build params (cli.build_model)
 # ------------------------------------------------------------------------------
-BUILD_ARCH="afno_v1"          # architecture id for cli.build_model / cli.train (e.g., afno_v1, afno_no_bc)
+BUILD_ARCH="afno_no_bc"          # architecture id for cli.build_model / cli.train (e.g., afno_v1, afno_no_bc)
 MODEL_STEP_IN=3               # shared temporal length for feed_data/build_model/train
-BUILD_NUM_VARS=11             # channel count in X (auto-overridden if AUTO_NUM_VARS_FROM_DATA=true)
+BUILD_NUM_VARS=11             # channel count in X (auto-overridden if AUTO_NUM_VARS_FROM_DATA=true) ###AUTO OVERRIDEN###
 BUILD_NUM_TIMES="${MODEL_STEP_IN}"  # frames used during training
 BUILD_HEIGHT=100              # spatial height
 BUILD_WIDTH=100               # spatial width
@@ -115,7 +125,7 @@ frames=5                     # sequence length for CMIP6 step2
 var_levels=(
   U10m V10m SST LANDMASK
   U28 V28 U05 V05
-  T23 QVAPOR10 PHB10 SLP
+  T23 QVAPOR10 PHB10 PSFC
 )
 cmip6_num_vars=${#var_levels[@]}  # auto count for output naming
 prefix="wrf_tropical_cyclone_track_${frames}f_${cmip6_num_vars}v_dataset"  # CMIP6 step2 output prefix
@@ -123,21 +133,22 @@ prefix="wrf_tropical_cyclone_track_${frames}f_${cmip6_num_vars}v_dataset"  # CMI
 # ------------------------------------------------------------------------------
 # WRF idealized inputs/outputs
 # ------------------------------------------------------------------------------
-ideal_wrf_root="$WORKDIR/WRF"                   # idealized output root
+ideal_wrf_root="$WORKDIR"                       # IDEALIZED already has its own WORKDIR branch
 ideal_x_res="d01"                                                 # resolution string in filename
-ideal_frames=5                     # frame length used in idealized step2
+ideal_frames=480                     # frame length used in idealized step2
 # Idealized variables to extract in step1
 ideal_var_levels=(
   U10m V10m SST LANDMASK
   U14 V14 U03 V03
-  T12 QVAPOR05 PHB05 SLP
+  T12 QVAPOR05 PHB05 PSFC
 )
 ideal_num_vars=${#ideal_var_levels[@]}  # auto count for idealized output naming
-# Idealized experiment folders to process
+Idealized experiment folders to process
 ideal_experiments=(
-  exp_02km_m01 exp_02km_m02 exp_02km_m03 exp_02km_m04 exp_02km_m05
-  exp_02km_m06 exp_02km_m07 exp_02km_m08 exp_02km_m09 exp_02km_m10
+    exp_02km_m01 exp_02km_m02 exp_02km_m03 exp_02km_m04 exp_02km_m05
+    exp_02km_m06 exp_02km_m07 exp_02km_m08 exp_02km_m09 exp_02km_m10
 )
+#ideal_experiments=(exp_02km_m10)
 ideal_step1_out="${ideal_wrf_root}/level_1_data"                  # idealized step1 output dir (.nc)
 ideal_step2_out="${ideal_wrf_root}/level_2_data"                  # idealized step2 output dir (.npy)
 ideal_chunk_prefix="wrf_idealized_track_${ideal_frames}f_${ideal_num_vars}v_dataset"  # idealized step2 prefix
@@ -159,7 +170,6 @@ FEED_STEP_IN="${MODEL_STEP_IN}"  # number of input frames in feed_data
 # ------------------------------------------------------------------------------
 # Training input selection (auto-switch based on DATASOURCE)
 # ------------------------------------------------------------------------------
-datasource_key="${DATASOURCE^^}"
 case "${datasource_key}" in
     CMIP6)
         #CMIP6_WRF=(1 1)      # run CMIP6 crop + CMIP6 npy

@@ -1,1 +1,3 @@
 test_space/
+slurm*
+__pycache__/
