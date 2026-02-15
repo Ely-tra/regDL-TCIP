@@ -9,9 +9,7 @@
 #SBATCH -N 1
 #SBATCH -t 24:00:00
 #SBATCH -J TCNN-wrf
-#SBATCH -p gpu
-#SBATCH --gpus-per-node=4
-#SBATCH --ntasks-per-node=4
+#SBATCH -p general
 #SBATCH -A r00043
 #SBATCH --mem=200G
 
@@ -19,7 +17,7 @@ module load python/gpu/3.10.10
 set -x
 
 ROOT="/N/u/kmluong/BigRed200/regDL-TCIP"   # repo root
-WORKDIR_BASE="/N/slate/kmluong/regDL-TCIP"          # base working directory; datasource subdir will be appended
+WORKDIR_BASE="/N/scratch/kmluong/regDL-TCIP"          # base working directory; datasource subdir will be appended
 ideal_wrf_base="/N/project/Typhoon-deep-learning/data/tc-wrf/"   # idealized input base dir, no need for track file
 CMIP6_BASE_DIR="/N/project/hurricane-deep-learning/data/cmip6"   # contains *_track.txt and matched raw dirs
 CMIP6_TRACK_GLOB="*_track.txt"                                    # basename <name>_track.txt => raw dir <name>
@@ -28,10 +26,10 @@ cd "$ROOT"
 # ------------------------------------------------------------------------------
 # Selectable flags (1=run, 0=skip)
 # ------------------------------------------------------------------------------
-DATASOURCE="CMIP6"  # choose data source workflow: CMIP6 or IDEALIZED
-CMIP6_WRF=(0 0)         # auto-off by DATASOURCE (manual on, auto off)
-WRF_IDEALIZED=(0 0)     # auto-off by DATASOURCE (manual on, auto off)
-TRAINING=(1 1 1)       # [build model config][run feed_data split][run training loop]
+DATASOURCE="IDEALIZED"  # choose data source workflow: CMIP6 or IDEALIZED
+CMIP6_WRF=(1 1)         # auto-off by DATASOURCE (manual on, auto off)
+WRF_IDEALIZED=(1 1)     # auto-off by DATASOURCE (manual on, auto off)
+TRAINING=(0 0 0)       # [build model config][run feed_data split][run training loop]
 datasource_key="${DATASOURCE^^}"
 case "${datasource_key}" in
     CMIP6|IDEALIZED)
@@ -125,7 +123,7 @@ frames=5                     # sequence length for CMIP6 step2
 var_levels=(
   U10m V10m SST LANDMASK
   U28 V28 U05 V05
-  T23 QVAPOR10 PHB10 PSFC
+  T23 QVAPOR10 PHB10 PSFC XLAT XLON
 )
 cmip6_num_vars=${#var_levels[@]}  # auto count for output naming
 prefix="wrf_tropical_cyclone_track_${frames}f_${cmip6_num_vars}v_dataset"  # CMIP6 step2 output prefix
@@ -140,7 +138,7 @@ ideal_frames=480                     # frame length used in idealized step2
 ideal_var_levels=(
   U10m V10m SST LANDMASK
   U14 V14 U03 V03
-  T12 QVAPOR05 PHB05 PSFC
+  T12 QVAPOR05 PHB05 PSFC XLAT XLON
 )
 ideal_num_vars=${#ideal_var_levels[@]}  # auto count for idealized output naming
 Idealized experiment folders to process
