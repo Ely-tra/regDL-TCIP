@@ -127,11 +127,22 @@ def var_extract(ds: xr.Dataset, var_levels=None, frames: int = 2):
         sample_x = sample_x.assign_coords(frame=np.arange(sample_x.sizes["frame"]))
         x_list.append(sample_x.expand_dims({"sample": [base]}))
 
-        zarr = np.array([lon_arr[base], lat_arr[base], sin_theta[base], cos_theta[base]])
+        zarr = np.stack(
+            [
+                lon_arr[idx_hist],
+                lat_arr[idx_hist],
+                sin_theta[idx_hist],
+                cos_theta[idx_hist],
+            ],
+            axis=-1,
+        )
         sample_z = xr.DataArray(
             zarr,
-            dims=("feature",),
-            coords={"feature": ["lon", "lat", "sin", "cos"]},
+            dims=("frame", "feature"),
+            coords={
+                "frame": np.arange(frames),
+                "feature": ["lon", "lat", "sin", "cos"],
+            },
         )
         z_list.append(sample_z.expand_dims({"sample": [base]}))
 

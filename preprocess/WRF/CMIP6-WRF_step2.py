@@ -3,9 +3,16 @@ import numpy as np
 import xarray as xr
 import argparse
 
+
+def _storm_id_from_filename(fname: str) -> str:
+    stem = os.path.splitext(os.path.basename(fname))[0]
+    prefix = "WRF_STORMID_"
+    return stem[len(prefix):] if stem.startswith(prefix) else stem
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Process WRF NetCDF files into two big NumPy arrays"
+        description="Process WRF NetCDF files into NumPy arrays (X, Z, storm IDs)"
     )
     parser.add_argument(
         "-i", "--indir",
@@ -69,7 +76,7 @@ def var_extract(
     X : np.ndarray
         shape = (ns, nf, nh, nw, nc)
     Z : np.ndarray
-        shape = (ns, 4)  # [lon, lat, sin, cos]
+        shape = (ns, nf, 4)  # [lon, lat, sin, cos] for each frame
     file_year : int
         Year of the first time step in this dataset.
     """
@@ -133,19 +140,30 @@ def var_extract(
         sample_X = sample_X.assign_coords(frame=np.arange(sample_X.sizes['frame']))
         X_list.append(sample_X.expand_dims({'sample': [base]}))
 
-        # build Z: [lon, lat, sin, cos]
-        zarr = np.array([lon_arr[base], lat_arr[base], sinθ[base], cosθ[base]])
+        # build Z per frame: [lon, lat, sin, cos]
+        zarr = np.stack(
+            [
+                lon_arr[idx_hist],
+                lat_arr[idx_hist],
+                sinθ[idx_hist],
+                cosθ[idx_hist],
+            ],
+            axis=-1,
+        )
         sample_Z = xr.DataArray(
             zarr,
-            dims=('feature',),
-            coords={'feature': ['lon', 'lat', 'sin', 'cos']}
+            dims=('frame', 'feature'),
+            coords={
+                'frame': np.arange(frames),
+                'feature': ['lon', 'lat', 'sin', 'cos'],
+            },
         )
         Z_list.append(sample_Z.expand_dims({'sample': [base]}))
 
     # concatenate and convert to NumPy
     X = xr.concat(X_list, dim='sample').values  # (ns, nf, nc, nh, nw)
     X = np.transpose(X, (0, 1, 3, 4, 2))        # → (ns, nf, nh, nw, nc)
-    Z = xr.concat(Z_list, dim='sample').values  # (ns, 4)
+    Z = xr.concat(Z_list, dim='sample').values  # (ns, nf, 4)
 
     return X, Z, file_year
 
@@ -158,30 +176,42 @@ def process_data(
 ):
     """
     Loop over all .nc files in indir, extract X/Z,
-    concatenate into two big arrays and save them.
+    concatenate arrays and save:
+      - {prefix}_X.npy
+      - {prefix}_Z.npy  (per-frame)
+      - {prefix}_storm_ids.npy
     """
     os.makedirs(outdir, exist_ok=True)
-    X_list, Z_list = [], []
+    X_list, Z_list, storm_id_list = [], [], []
 
-    for fname in os.listdir(indir):
+    for fname in sorted(os.listdir(indir)):
         if not fname.endswith('.nc'):
             continue
-        ds = xr.open_dataset(os.path.join(indir, fname))
-        n_time = int(ds.sizes['Time'])
-        if n_time < frames:
-            print(f"Skipping {fname}: Time len {n_time} < frames {frames}")
-            continue 
-        X, Z, _ = var_extract(ds, var_levels, frames)
+        fpath = os.path.join(indir, fname)
+        with xr.open_dataset(fpath) as ds:
+            n_time = int(ds.sizes['Time'])
+            if n_time < frames:
+                print(f"Skipping {fname}: Time len {n_time} < frames {frames}")
+                continue
+            X, Z, _ = var_extract(ds, var_levels, frames)
         X_list.append(X)
         Z_list.append(Z)
+        storm_id = _storm_id_from_filename(fname)
+        storm_id_dtype = f"<U{max(1, len(storm_id))}"
+        storm_id_list.append(np.full(X.shape[0], storm_id, dtype=storm_id_dtype))
+
+    if not X_list:
+        raise RuntimeError(f"No valid .nc files found in {indir}")
 
     X_all = np.concatenate(X_list, axis=0)
     Z_all = np.concatenate(Z_list, axis=0)
+    storm_ids_all = np.concatenate(storm_id_list, axis=0).astype(str)
 
     # format the prefix with the actual frames value
     out_prefix = prefix.format(frames=frames)
     np.save(os.path.join(outdir, f"{out_prefix}_X.npy"), X_all)
     np.save(os.path.join(outdir, f"{out_prefix}_Z.npy"), Z_all)
+    np.save(os.path.join(outdir, f"{out_prefix}_storm_ids.npy"), storm_ids_all)
 
 if __name__ == "__main__":
     args = parse_args()
