@@ -109,7 +109,16 @@ def var_extract(ds: xr.Dataset, var_levels=None, frames: int = 2):
         var_names.append(f"{name}_{lvl}" if lvl is not None else name)
 
     n_time = ds.sizes["Time"]
-    bases = np.arange(n_time % frames, n_time, 4) #ignores some first frames
+    n_time = int(ds.sizes["Time"])
+    F = int(frames)     # 5
+    S = 4               # stride -> overlap = 1 frame
+    
+    # discard ONLY from the beginning so that the last chunk ends at the final frame
+    head = (n_time - F) % S          # 0..3
+    last_base = n_time - F
+    
+    bases = np.arange(head, last_base + 1, S)
+
     x_list, z_list = [], []
 
     for base in bases:
