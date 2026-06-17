@@ -7,7 +7,7 @@
 
 # SLURM -------------------------------------------------------------
 #SBATCH -N 1
-#SBATCH -t 24:00:00
+#SBATCH -t 96:00:00
 #SBATCH -J TCNN-wrf
 #SBATCH -p general
 #SBATCH -A r00043
@@ -17,16 +17,16 @@ module load python/gpu/3.10.10
 set -x
 
 ROOT="/N/u/kmluong/BigRed200/regDL-TCIP"   # repo root
-WORKDIR_BASE="/N/scratch/kmluong/regDL-TCIP"          # base working directory; datasource subdir will be appended
+WORKDIR_BASE="/N/slate/kmluong/regDL-TCIP"          # base working directory; datasource subdir will be appended
 ideal_wrf_base="/N/project/Typhoon-deep-learning/data/tc-wrf/"   # idealized input base dir, no need for track file
-CMIP6_BASE_DIR="/N/project/hurricane-deep-learning/data/cmip6"   # contains *_track.txt and matched raw dirs
+CMIP6_BASE_DIR="/N/scratch/ckieu/cmip6"   # contains *_track.txt and matched raw dirs
 CMIP6_TRACK_GLOB="*_track.txt"                                    # basename <name>_track.txt => raw dir <name>
 cd "$ROOT"
 
 # ------------------------------------------------------------------------------
 # Selectable flags (1=run, 0=skip)
 # ------------------------------------------------------------------------------
-DATASOURCE="IDEALIZED"  # choose data source workflow: CMIP6 or IDEALIZED
+DATASOURCE="CMIP6"  # choose data source workflow: CMIP6 or IDEALIZED
 CMIP6_WRF=(1 1)         # auto-off by DATASOURCE (manual on, auto off)
 WRF_IDEALIZED=(1 1)     # auto-off by DATASOURCE (manual on, auto off)
 TRAINING=(0 0 0)       # [build model config][run feed_data split][run training loop]
@@ -123,7 +123,7 @@ frames=5                     # sequence length for CMIP6 step2
 var_levels=(
   U10m V10m SST LANDMASK
   U28 V28 U05 V05
-  T23 QVAPOR10 PHB10 PSFC XLAT XLON
+  T23 QVAPOR10 PHB10 PSFC TRUE_LAT TRUE_LONG
 )
 cmip6_num_vars=${#var_levels[@]}  # auto count for output naming
 prefix="wrf_tropical_cyclone_track_${frames}f_${cmip6_num_vars}v_dataset"  # CMIP6 step2 output prefix
@@ -138,7 +138,7 @@ ideal_frames=480                     # frame length used in idealized step2
 ideal_var_levels=(
   U10m V10m SST LANDMASK
   U14 V14 U03 V03
-  T12 QVAPOR05 PHB05 PSFC XLAT XLON
+  T12 QVAPOR05 PHB05 PSFC TRUE_LAT TRUE_LONG
 )
 ideal_num_vars=${#ideal_var_levels[@]}  # auto count for idealized output naming
 Idealized experiment folders to process

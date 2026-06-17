@@ -28,10 +28,10 @@ cd "$ROOT"
 # ------------------------------------------------------------------------------
 # Selectable flags (1=run, 0=skip)
 # ------------------------------------------------------------------------------
-DATASOURCE="CMIP6"  # choose data source workflow: CMIP6 or IDEALIZED
+DATASOURCE="IDEALIZED"  # choose data source workflow: CMIP6 or IDEALIZED
 CMIP6_WRF=(0 0)         # auto-off by DATASOURCE (manual on, auto off)
 WRF_IDEALIZED=(0 0)     # auto-off by DATASOURCE (manual on, auto off)
-TRAINING=(1 1 1)       # [build model config][run feed_data split][run training loop]
+TRAINING=(1 0 1)       # [build model config][run feed_data split][run training loop]
 datasource_key="${DATASOURCE^^}"
 case "${datasource_key}" in
     CMIP6|IDEALIZED)
@@ -50,8 +50,8 @@ TMP_DIR="$WORKDIR/tmp"                  # temp output for train/val/test splits
 CKPT_DIR="$WORKDIR/checkpoints"         # checkpoint output directory
 PREPROCESS_DIR="${ROOT}/preprocess"           # base dir for cmip6 step1/2 scripts
 MODEL_NAME="AFNO-TCP-BC.pt"                                 # base checkpoint name
-MODEL_CFG="${CKPT_DIR}/AFNO_config1-BC.json"                # build_model output config (json)
-MODEL_YAML="${ROOT}/configs/model/AFNO_BC_v1.yaml"           # build_model output yaml
+MODEL_CFG="${CKPT_DIR}/AFNO-TCP-BC.json"                # build_model output config (json)
+MODEL_YAML="${ROOT}/configs/model/AFNO-TCP-BC.yaml"           # build_model output yaml
 
 # ------------------------------------------------------------------------------
 # Model build params (cli.build_model)
@@ -143,7 +143,7 @@ ideal_var_levels=(
   T12 QVAPOR05 PHB05 PSFC
 )
 ideal_num_vars=${#ideal_var_levels[@]}  # auto count for idealized output naming
-Idealized experiment folders to process
+# Idealized experiment folders to process
 ideal_experiments=(
     exp_02km_m01 exp_02km_m02 exp_02km_m03 exp_02km_m04 exp_02km_m05
     exp_02km_m06 exp_02km_m07 exp_02km_m08 exp_02km_m09 exp_02km_m10
@@ -165,6 +165,7 @@ FEED_TRAIN_FRAC=0.7          # fraction for train split (data_mode=0)
 FEED_VAL_FRAC=0.2            # fraction for val split (data_mode=0)
 FEED_TEST_FRAC=0.1           # fraction for test split (data_mode=0)
 FEED_NUM_SEGMENTS=1          # segmented split count (data_mode=0)
+FEED_SEGMENT_SEED=42         # reproducability
 FEED_STEP_IN="${MODEL_STEP_IN}"  # number of input frames in feed_data
 
 # ------------------------------------------------------------------------------
@@ -369,6 +370,7 @@ if [ "${TRAINING[1]}" -eq 1 ]; then
       --num_segments "${FEED_NUM_SEGMENTS}" \
       --step_in "${FEED_STEP_IN}" \
       --temp "${TMP_DIR}" \
+      --segment_seed "${FEED_SEGMENT_SEED}" \
       "${FEED_EXP_ARGS[@]}"
 fi
 
