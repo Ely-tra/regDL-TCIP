@@ -75,7 +75,16 @@ def get_coord_names(var):
     return "XLAT", "XLONG"
 
 
-def extract_data(ds, clat, clon, imsize_x, imsize_y):
+def extract_data(
+    ds,
+    clat,
+    clon,
+    imsize_x,
+    imsize_y,
+    storm_id=None,
+    storm_lifetime=None,
+    lifetime_frame=None,
+):
     lat_name, lon_name = get_coord_names(None)
     grid_lat = ds[lat_name].isel(Time=0)
     grid_lon = ds[lon_name].isel(Time=0)
@@ -146,6 +155,23 @@ def extract_data(ds, clat, clon, imsize_x, imsize_y):
     )
     ds_sub = ds_sub.assign_coords(cen_lat=cen_lat, cen_lon=cen_lon)
 
+    if storm_id is not None:
+        storm_id = str(storm_id)
+        ds_sub = ds_sub.assign_coords(
+            storm_id=(
+                "Time",
+                np.full(nT, storm_id, dtype=f"<U{max(1, len(storm_id))}"),
+            )
+        )
+    if storm_lifetime is not None:
+        ds_sub = ds_sub.assign_coords(
+            storm_lifetime=("Time", np.full(nT, int(storm_lifetime), dtype=np.int64))
+        )
+    if lifetime_frame is not None:
+        ds_sub = ds_sub.assign_coords(
+            lifetime_frame=("Time", np.full(nT, int(lifetime_frame), dtype=np.int64))
+        )
+
     ds_sub = (
         ds_sub
         .swap_dims({'Time':'XTIME'})        # 1) make XTIME your only time‐dim
@@ -160,8 +186,9 @@ def process_groups(groups, data_dir, workdir, imsize_x=50, imsize_y=50):
         print(f"=== Starting group {group_id} ===")
         ds_list = []
         skip_group = False
+        storm_lifetime = len(rows)
 
-        for row in rows:
+        for lifetime_frame, row in enumerate(rows, start=1):
             try:
                 # Parse row values
                 year = int(row[1])
@@ -176,7 +203,16 @@ def process_groups(groups, data_dir, workdir, imsize_x=50, imsize_y=50):
                 print(f"Processing {group_id}, file: {fpath}")
                 # Open and extract
                 ds = xr.open_dataset(fpath)
-                ds_sub = extract_data(ds, clat, clon, imsize_x, imsize_y)
+                ds_sub = extract_data(
+                    ds,
+                    clat,
+                    clon,
+                    imsize_x,
+                    imsize_y,
+                    storm_id=group_id,
+                    storm_lifetime=storm_lifetime,
+                    lifetime_frame=lifetime_frame,
+                )
                 ds_list.append(ds_sub)
 
             except Exception as e:

@@ -10,6 +10,15 @@ def _storm_id_from_filename(fname: str) -> str:
     return stem[len(prefix):] if stem.startswith(prefix) else stem
 
 
+def _first_value(ds: xr.Dataset, name: str, default=None):
+    if name not in ds:
+        return default
+    values = np.asarray(ds[name].values).reshape(-1)
+    if values.size == 0:
+        return default
+    return values[0].item()
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Process WRF NetCDF files into NumPy arrays (X, Z, storm IDs)"
@@ -76,7 +85,9 @@ def var_extract(
     X : np.ndarray
         shape = (ns, nf, nh, nw, nc)
     Z : np.ndarray
-        shape = (ns, nf, 4)  # [lon, lat, sin, cos] for each frame
+        shape = (ns, nf, 6)
+        [lon, lat, sin, cos, storm_lifetime, chunk_start_frame] for each frame.
+        chunk_start_frame is 1-based within the storm lifetime.
     file_year : int
         Year of the first time step in this dataset.
     """
@@ -100,6 +111,16 @@ def var_extract(
 
     lon_arr  = ds['cen_lon'].values
     lat_arr  = ds['cen_lat'].values
+    lifetime_arr = (
+        ds['storm_lifetime'].values
+        if 'storm_lifetime' in ds
+        else np.full(ds.sizes['Time'], ds.sizes['Time'], dtype=np.int64)
+    )
+    lifetime_frame_arr = (
+        ds['lifetime_frame'].values
+        if 'lifetime_frame' in ds
+        else np.arange(1, ds.sizes['Time'] + 1, dtype=np.int64)
+    )
     year_arr = t.dt.year.values
     file_year = int(year_arr[0])
 
@@ -122,6 +143,7 @@ def var_extract(
     n_time = ds.sizes['Time']
     bases = np.arange(0, n_time, 4)
     X_list, Z_list = [], []
+    chunk_start_frames, storm_lifetimes = [], []
 
     for base in bases:
         idx_hist = base + np.arange(frames)
@@ -140,13 +162,20 @@ def var_extract(
         sample_X = sample_X.assign_coords(frame=np.arange(sample_X.sizes['frame']))
         X_list.append(sample_X.expand_dims({'sample': [base]}))
 
-        # build Z per frame: [lon, lat, sin, cos]
+        chunk_start_frame = int(np.asarray(lifetime_frame_arr)[base])
+        storm_lifetime = int(np.asarray(lifetime_arr)[base])
+        chunk_start_frames.append(chunk_start_frame)
+        storm_lifetimes.append(storm_lifetime)
+
+        # build Z per frame: [lon, lat, sin, cos, storm_lifetime, chunk_start_frame]
         zarr = np.stack(
             [
                 lon_arr[idx_hist],
                 lat_arr[idx_hist],
                 sinθ[idx_hist],
                 cosθ[idx_hist],
+                np.full(frames, storm_lifetime, dtype=np.float64),
+                np.full(frames, chunk_start_frame, dtype=np.float64),
             ],
             axis=-1,
         )
@@ -155,7 +184,7 @@ def var_extract(
             dims=('frame', 'feature'),
             coords={
                 'frame': np.arange(frames),
-                'feature': ['lon', 'lat', 'sin', 'cos'],
+                'feature': ['lon', 'lat', 'sin', 'cos', 'storm_lifetime', 'chunk_start_frame'],
             },
         )
         Z_list.append(sample_Z.expand_dims({'sample': [base]}))
@@ -163,9 +192,15 @@ def var_extract(
     # concatenate and convert to NumPy
     X = xr.concat(X_list, dim='sample').values  # (ns, nf, nc, nh, nw)
     X = np.transpose(X, (0, 1, 3, 4, 2))        # → (ns, nf, nh, nw, nc)
-    Z = xr.concat(Z_list, dim='sample').values  # (ns, nf, 4)
+    Z = xr.concat(Z_list, dim='sample').values  # (ns, nf, 6)
 
-    return X, Z, file_year
+    return (
+        X,
+        Z,
+        file_year,
+        np.asarray(storm_lifetimes, dtype=np.int64),
+        np.asarray(chunk_start_frames, dtype=np.int64),
+    )
 
 def process_data(
     indir: str,
@@ -180,9 +215,12 @@ def process_data(
       - {prefix}_X.npy
       - {prefix}_Z.npy  (per-frame)
       - {prefix}_storm_ids.npy
+      - {prefix}_storm_lifetimes.npy
+      - {prefix}_chunk_start_frames.npy
     """
     os.makedirs(outdir, exist_ok=True)
     X_list, Z_list, storm_id_list = [], [], []
+    storm_lifetime_list, chunk_start_frame_list = [], []
 
     for fname in sorted(os.listdir(indir)):
         if not fname.endswith('.nc'):
@@ -193,12 +231,14 @@ def process_data(
             if n_time < frames:
                 print(f"Skipping {fname}: Time len {n_time} < frames {frames}")
                 continue
-            X, Z, _ = var_extract(ds, var_levels, frames)
+            X, Z, _, storm_lifetimes, chunk_start_frames = var_extract(ds, var_levels, frames)
+            storm_id = str(_first_value(ds, "storm_id", _storm_id_from_filename(fname)))
         X_list.append(X)
         Z_list.append(Z)
-        storm_id = _storm_id_from_filename(fname)
         storm_id_dtype = f"<U{max(1, len(storm_id))}"
         storm_id_list.append(np.full(X.shape[0], storm_id, dtype=storm_id_dtype))
+        storm_lifetime_list.append(storm_lifetimes)
+        chunk_start_frame_list.append(chunk_start_frames)
 
     if not X_list:
         raise RuntimeError(f"No valid .nc files found in {indir}")
@@ -206,12 +246,16 @@ def process_data(
     X_all = np.concatenate(X_list, axis=0)
     Z_all = np.concatenate(Z_list, axis=0)
     storm_ids_all = np.concatenate(storm_id_list, axis=0).astype(str)
+    storm_lifetimes_all = np.concatenate(storm_lifetime_list, axis=0).astype(np.int64)
+    chunk_start_frames_all = np.concatenate(chunk_start_frame_list, axis=0).astype(np.int64)
 
     # format the prefix with the actual frames value
     out_prefix = prefix.format(frames=frames)
     np.save(os.path.join(outdir, f"{out_prefix}_X.npy"), X_all)
     np.save(os.path.join(outdir, f"{out_prefix}_Z.npy"), Z_all)
     np.save(os.path.join(outdir, f"{out_prefix}_storm_ids.npy"), storm_ids_all)
+    np.save(os.path.join(outdir, f"{out_prefix}_storm_lifetimes.npy"), storm_lifetimes_all)
+    np.save(os.path.join(outdir, f"{out_prefix}_chunk_start_frames.npy"), chunk_start_frames_all)
 
 if __name__ == "__main__":
     args = parse_args()

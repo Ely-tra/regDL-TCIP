@@ -120,6 +120,7 @@ def var_extract(ds: xr.Dataset, var_levels=None, frames: int = 2):
     bases = np.arange(head, last_base + 1, S)
 
     x_list, z_list = [], []
+    chunk_start_frames, storm_lifetimes = [], []
 
     for base in bases:
         idx_hist = base + np.arange(frames)
@@ -136,12 +137,19 @@ def var_extract(ds: xr.Dataset, var_levels=None, frames: int = 2):
         sample_x = sample_x.assign_coords(frame=np.arange(sample_x.sizes["frame"]))
         x_list.append(sample_x.expand_dims({"sample": [base]}))
 
+        chunk_start_frame = int(base) + 1
+        storm_lifetime = int(n_time)
+        chunk_start_frames.append(chunk_start_frame)
+        storm_lifetimes.append(storm_lifetime)
+
         zarr = np.stack(
             [
                 lon_arr[idx_hist],
                 lat_arr[idx_hist],
                 sin_theta[idx_hist],
                 cos_theta[idx_hist],
+                np.full(frames, storm_lifetime, dtype=np.float64),
+                np.full(frames, chunk_start_frame, dtype=np.float64),
             ],
             axis=-1,
         )
@@ -150,7 +158,7 @@ def var_extract(ds: xr.Dataset, var_levels=None, frames: int = 2):
             dims=("frame", "feature"),
             coords={
                 "frame": np.arange(frames),
-                "feature": ["lon", "lat", "sin", "cos"],
+                "feature": ["lon", "lat", "sin", "cos", "storm_lifetime", "chunk_start_frame"],
             },
         )
         z_list.append(sample_z.expand_dims({"sample": [base]}))
@@ -158,12 +166,19 @@ def var_extract(ds: xr.Dataset, var_levels=None, frames: int = 2):
     x = xr.concat(x_list, dim="sample").values
     x = np.transpose(x, (0, 1, 3, 4, 2))
     z = xr.concat(z_list, dim="sample").values
-    return x, z, file_year
+    return (
+        x,
+        z,
+        file_year,
+        np.asarray(storm_lifetimes, dtype=np.int64),
+        np.asarray(chunk_start_frames, dtype=np.int64),
+    )
 
 
 def process_data(indir, outdir, var_levels=None, frames: int = 2, prefix: str = "wrf_idealized_track_{frames}_dataset"):
     os.makedirs(outdir, exist_ok=True)
     x_list, z_list, exp_id_list = [], [], []
+    storm_lifetime_list, chunk_start_frame_list = [], []
 
     for fname in os.listdir(indir):
         if not fname.endswith(".nc"):
@@ -175,12 +190,14 @@ def process_data(indir, outdir, var_levels=None, frames: int = 2, prefix: str = 
             if n_time < frames:
                 print(f"Skipping {fname}: Time len {n_time} < frames {frames}")
                 continue
-            x, z, _ = var_extract(ds, var_levels, frames)
+            x, z, _, storm_lifetimes, chunk_start_frames = var_extract(ds, var_levels, frames)
         x_list.append(x)
         z_list.append(z)
         sample_exp_id = os.path.splitext(fname)[0]
         exp_id_dtype = f"<U{max(1, len(sample_exp_id))}"
         exp_id_list.append(np.full(x.shape[0], sample_exp_id, dtype=exp_id_dtype))
+        storm_lifetime_list.append(storm_lifetimes)
+        chunk_start_frame_list.append(chunk_start_frames)
 
     if not x_list:
         raise RuntimeError(f"No valid .nc files found in {indir}")
@@ -188,11 +205,15 @@ def process_data(indir, outdir, var_levels=None, frames: int = 2, prefix: str = 
     x_all = np.concatenate(x_list, axis=0)
     z_all = np.concatenate(z_list, axis=0)
     exp_ids_all = np.concatenate(exp_id_list, axis=0).astype(str)
+    storm_lifetimes_all = np.concatenate(storm_lifetime_list, axis=0).astype(np.int64)
+    chunk_start_frames_all = np.concatenate(chunk_start_frame_list, axis=0).astype(np.int64)
 
     out_prefix = prefix.format(frames=frames)
     np.save(os.path.join(outdir, f"{out_prefix}_X.npy"), x_all)
     np.save(os.path.join(outdir, f"{out_prefix}_Z.npy"), z_all)
     np.save(os.path.join(outdir, f"{out_prefix}_exp_ids.npy"), exp_ids_all)
+    np.save(os.path.join(outdir, f"{out_prefix}_storm_lifetimes.npy"), storm_lifetimes_all)
+    np.save(os.path.join(outdir, f"{out_prefix}_chunk_start_frames.npy"), chunk_start_frames_all)
 
 
 if __name__ == "__main__":
