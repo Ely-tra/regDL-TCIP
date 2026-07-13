@@ -35,6 +35,11 @@ def parse_args():
         help="Path to the input .npy dataset",
     )
     parser.add_argument(
+        "--z_path",
+        default="",
+        help="Optional path to sample metadata Z .npy. If omitted, *_X.npy inputs infer *_Z.npy.",
+    )
+    parser.add_argument(
         "--exp_ids_path",
         default="",
         help="Optional path to sample-level experiment IDs (.npy); used with wrf_experiment splitter",

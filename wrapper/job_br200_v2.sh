@@ -30,7 +30,7 @@ cd "$ROOT"
 # ------------------------------------------------------------------------------
 DATASOURCE="IDEALIZED"  # choose data source workflow: CMIP6 or IDEALIZED
 CMIP6_WRF=(0 0)         # auto-off by DATASOURCE (manual on, auto off)
-WRF_IDEALIZED=(0 0)     # auto-off by DATASOURCE (manual on, auto off)
+WRF_IDEALIZED=(1 1)     # auto-off by DATASOURCE (manual on, auto off)
 TRAINING=(1 0 1)       # [build model config][run feed_data split][run training loop]
 datasource_key="${DATASOURCE^^}"
 case "${datasource_key}" in
@@ -49,14 +49,14 @@ esac
 TMP_DIR="$WORKDIR/tmp"                  # temp output for train/val/test splits
 CKPT_DIR="$WORKDIR/checkpoints"         # checkpoint output directory
 PREPROCESS_DIR="${ROOT}/preprocess"           # base dir for cmip6 step1/2 scripts
-MODEL_NAME="AFNO-TCP-BC.pt"                                 # base checkpoint name
-MODEL_CFG="${CKPT_DIR}/AFNO-TCP-BC.json"                # build_model output config (json)
-MODEL_YAML="${ROOT}/configs/model/AFNO-TCP-BC.yaml"           # build_model output yaml
+MODEL_NAME="AFNO-TCP-IDEALIZED-NO-BC.pt"                                 # base checkpoint name
+MODEL_CFG="${CKPT_DIR}/AFNO-TCP-IDEALIZED-NO-BC.json"                # build_model output config (json)
+MODEL_YAML="${ROOT}/configs/model/AFNO-TCP-IDEALIZED-NO-BC.yaml"           # build_model output yaml
 
 # ------------------------------------------------------------------------------
 # Model build params (cli.build_model)
 # ------------------------------------------------------------------------------
-BUILD_ARCH="afno_v1"          # architecture id for cli.build_model / cli.train (e.g., afno_v1, afno_no_bc)
+BUILD_ARCH="afno_no_bc"          # architecture id for cli.build_model / cli.train (e.g., afno_v1, afno_no_bc)
 MODEL_STEP_IN=3               # shared temporal length for feed_data/build_model/train
 BUILD_NUM_VARS=11             # channel count in X (auto-overridden if AUTO_NUM_VARS_FROM_DATA=true) ###AUTO OVERRIDEN###
 BUILD_NUM_TIMES="${MODEL_STEP_IN}"  # frames used during training
@@ -82,7 +82,7 @@ TRAIN_NUM_TIMES="${MODEL_STEP_IN}" # frames per sample
 TRAIN_HEIGHT=100                   # spatial height
 TRAIN_WIDTH=100                    # spatial width
 TRAIN_NUM_BLOCKS=8                 # AFNO depth during training
-TRAIN_RIM=1                        # rim padding flag
+TRAIN_RIM=0                        # rim padding flag
 TRAIN_LR=1e-4                      # learning rate
 TRAIN_WD=1e-4                      # weight decay
 TRAIN_EPOCHS=300                   # total epochs
@@ -125,7 +125,7 @@ frames=5                     # sequence length for CMIP6 step2
 var_levels=(
   U10m V10m SST LANDMASK
   U28 V28 U05 V05
-  T23 QVAPOR10 PHB10 PSFC
+  T23 QVAPOR10 PHB10 PSFC TRUE_LAT TRUE_LONG
 )
 cmip6_num_vars=${#var_levels[@]}  # auto count for output naming
 prefix="wrf_tropical_cyclone_track_${frames}f_${cmip6_num_vars}v_dataset"  # CMIP6 step2 output prefix

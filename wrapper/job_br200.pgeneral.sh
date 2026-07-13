@@ -19,7 +19,7 @@ set -x
 ROOT="/N/u/kmluong/BigRed200/regDL-TCIP"   # repo root
 WORKDIR_BASE="/N/slate/kmluong/regDL-TCIP"          # base working directory; datasource subdir will be appended
 ideal_wrf_base="/N/project/Typhoon-deep-learning/data/tc-wrf/"   # idealized input base dir, no need for track file
-CMIP6_BASE_DIR="/N/scratch/ckieu/cmip6"   # contains *_track.txt and matched raw dirs
+CMIP6_BASE_DIR="/N/project/hurricane-deep-learning/data/cmip6"   # contains *_track.txt and matched raw dirs
 CMIP6_TRACK_GLOB="*_track.txt"                                    # basename <name>_track.txt => raw dir <name>
 cd "$ROOT"
 

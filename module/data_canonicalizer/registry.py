@@ -112,6 +112,46 @@ def _write_split_meta(
         f.write(f"train_size={split_result.train_idx.size}\n")
         f.write(f"val_size={split_result.val_idx.size}\n")
         f.write(f"test_size={split_result.test_idx.size}\n")
+        z_path = getattr(args, "z_path", None)
+        if z_path:
+            f.write(f"z_path={z_path}\n")
+
+
+def _infer_z_path(args) -> pathlib.Path | None:
+    z_path = getattr(args, "z_path", "")
+    if z_path:
+        return pathlib.Path(z_path)
+
+    data_path = getattr(args, "data_path", "")
+    if not data_path:
+        return None
+
+    path = pathlib.Path(data_path)
+    name = path.name
+    if name.endswith("_X.npy"):
+        return path.with_name(f"{name[:-6]}_Z.npy")
+    return None
+
+
+def _save_optional_z_splits(
+    tmp_path: pathlib.Path,
+    args,
+    data: np.ndarray,
+    split_result: SplitResult,
+) -> pathlib.Path | None:
+    z_path = _infer_z_path(args)
+    if z_path is None or not z_path.exists():
+        return None
+
+    z = np.load(z_path, mmap_mode="r")
+    if z.shape[0] != data.shape[0]:
+        raise ValueError(f"Z sample count {z.shape[0]} does not match data sample count {data.shape[0]}: {z_path}")
+
+    np.save(tmp_path / "train_Z.npy", np.asarray(z[split_result.train_idx]))
+    np.save(tmp_path / "test_Z.npy", np.asarray(z[split_result.test_idx]))
+    if split_result.val_idx.size > 0 and getattr(args, "val_frac", 1) > 0:
+        np.save(tmp_path / "val_Z.npy", np.asarray(z[split_result.val_idx]))
+    return z_path
 
 
 def save_splits(
@@ -132,6 +172,15 @@ def save_splits(
     np.save(tmp_path / "test.npy", np.asarray(data[split_result.test_idx]))
     if split_result.val_idx.size > 0 and getattr(args, "val_frac", 1) > 0:
         np.save(tmp_path / "val.npy", np.asarray(data[split_result.val_idx]))
+
+    np.save(tmp_path / "train_idx.npy", split_result.train_idx)
+    np.save(tmp_path / "test_idx.npy", split_result.test_idx)
+    if split_result.val_idx.size > 0 and getattr(args, "val_frac", 1) > 0:
+        np.save(tmp_path / "val_idx.npy", split_result.val_idx)
+
+    z_path = _save_optional_z_splits(tmp_path, args, data, split_result)
+    if z_path is not None:
+        args.z_path = str(z_path)
 
     _write_split_meta(
         tmp_path / "split_meta.txt",

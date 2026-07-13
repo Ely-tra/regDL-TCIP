@@ -1,6 +1,6 @@
 architecture: AFNO_v1
 inputs:
-  num_vars: 12
+  num_vars: 14
   num_times: 3
   height: 100
   width: 100
@@ -9,7 +9,7 @@ stem:
   stem_channels: 256
 bc_encoder:
   type: BCEncoder
-  in_channels: 13
+  in_channels: 15
   z_dim: 128
 trunk:
   block_type: CondAFNO2DBlock
@@ -19,4 +19,4 @@ trunk:
   mlp_expansion_ratio: 4
   hard_threshold: 0.0
 output:
-  num_vars: 12
+  num_vars: 14
